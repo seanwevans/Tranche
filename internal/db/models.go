@@ -15,6 +15,31 @@ type Customer struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
+type Invoice struct {
+	ID            int64     `json:"id"`
+	CustomerID    int64     `json:"customer_id"`
+	PeriodStart   time.Time `json:"period_start"`
+	PeriodEnd     time.Time `json:"period_end"`
+	SubtotalCents int64     `json:"subtotal_cents"`
+	DiscountCents int64     `json:"discount_cents"`
+	TotalCents    int64     `json:"total_cents"`
+	CreatedAt     time.Time `json:"created_at"`
+}
+
+type InvoiceLineItem struct {
+	ID             int64     `json:"id"`
+	InvoiceID      int64     `json:"invoice_id"`
+	ServiceID      int64     `json:"service_id"`
+	WindowStart    time.Time `json:"window_start"`
+	WindowEnd      time.Time `json:"window_end"`
+	PrimaryBytes   int64     `json:"primary_bytes"`
+	BackupBytes    int64     `json:"backup_bytes"`
+	CoverageFactor float64   `json:"coverage_factor"`
+	AmountCents    int64     `json:"amount_cents"`
+	DiscountCents  int64     `json:"discount_cents"`
+	CreatedAt      time.Time `json:"created_at"`
+}
+
 type Service struct {
 	ID         int64        `json:"id"`
 	CustomerID int64        `json:"customer_id"`
@@ -49,4 +74,15 @@ type StormPolicy struct {
 	CooldownSeconds   int32     `json:"cooldown_seconds"`
 	MaxCoverageFactor float64   `json:"max_coverage_factor"`
 	CreatedAt         time.Time `json:"created_at"`
+}
+
+type UsageSnapshot struct {
+	ID           int64         `json:"id"`
+	ServiceID    int64         `json:"service_id"`
+	WindowStart  time.Time     `json:"window_start"`
+	WindowEnd    time.Time     `json:"window_end"`
+	PrimaryBytes int64         `json:"primary_bytes"`
+	BackupBytes  int64         `json:"backup_bytes"`
+	CreatedAt    time.Time     `json:"created_at"`
+	InvoiceID    sql.NullInt64 `json:"invoice_id"`
 }

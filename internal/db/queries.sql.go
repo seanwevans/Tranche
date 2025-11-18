@@ -8,17 +8,16 @@ package db
 import (
 	"context"
 	"database/sql"
+	"time"
 )
 
 const getActiveServices = `-- name: GetActiveServices :many
-
 SELECT id, customer_id, name, primary_cdn, backup_cdn, created_at, deleted_at
 FROM services
 WHERE deleted_at IS NULL
 ORDER BY id
 `
 
-// Services
 func (q *Queries) GetActiveServices(ctx context.Context) ([]Service, error) {
 	rows, err := q.db.QueryContext(ctx, getActiveServices)
 	if err != nil {
@@ -141,6 +140,19 @@ func (q *Queries) GetLastStormEvent(ctx context.Context, arg GetLastStormEventPa
 	return i, err
 }
 
+const getMaxCoverageFactorForService = `-- name: GetMaxCoverageFactorForService :one
+SELECT COALESCE(MAX(max_coverage_factor), 1.0)::double precision AS max_coverage_factor
+FROM storm_policies
+WHERE service_id = $1
+`
+
+func (q *Queries) GetMaxCoverageFactorForService(ctx context.Context, serviceID int64) (float64, error) {
+	row := q.db.QueryRowContext(ctx, getMaxCoverageFactorForService, serviceID)
+	var max_coverage_factor float64
+	err := row.Scan(&max_coverage_factor)
+	return max_coverage_factor, err
+}
+
 const getServiceDomains = `-- name: GetServiceDomains :many
 SELECT id, service_id, name, created_at
 FROM service_domains
@@ -176,15 +188,57 @@ func (q *Queries) GetServiceDomains(ctx context.Context, serviceID int64) ([]Ser
 	return items, nil
 }
 
-const getStormPoliciesForService = `-- name: GetStormPoliciesForService :many
+const getStormEventsForWindow = `-- name: GetStormEventsForWindow :many
+SELECT id, service_id, kind, started_at, ended_at
+FROM storm_events
+WHERE service_id = $1
+  AND started_at < $2
+  AND (ended_at IS NULL OR ended_at > $3)
+ORDER BY started_at
+`
 
+type GetStormEventsForWindowParams struct {
+	ServiceID   int64        `json:"service_id"`
+	WindowEnd   time.Time    `json:"window_end"`
+	WindowStart sql.NullTime `json:"window_start"`
+}
+
+func (q *Queries) GetStormEventsForWindow(ctx context.Context, arg GetStormEventsForWindowParams) ([]StormEvent, error) {
+	rows, err := q.db.QueryContext(ctx, getStormEventsForWindow, arg.ServiceID, arg.WindowEnd, arg.WindowStart)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []StormEvent{}
+	for rows.Next() {
+		var i StormEvent
+		if err := rows.Scan(
+			&i.ID,
+			&i.ServiceID,
+			&i.Kind,
+			&i.StartedAt,
+			&i.EndedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getStormPoliciesForService = `-- name: GetStormPoliciesForService :many
 SELECT id, service_id, kind, threshold_avail, window_seconds, cooldown_seconds, max_coverage_factor, created_at
 FROM storm_policies
 WHERE service_id = $1
 ORDER BY id
 `
 
-// Storm policies/events
 func (q *Queries) GetStormPoliciesForService(ctx context.Context, serviceID int64) ([]StormPolicy, error) {
 	rows, err := q.db.QueryContext(ctx, getStormPoliciesForService, serviceID)
 	if err != nil {
@@ -215,6 +269,163 @@ func (q *Queries) GetStormPoliciesForService(ctx context.Context, serviceID int6
 		return nil, err
 	}
 	return items, nil
+}
+
+const getUnbilledUsageSnapshots = `-- name: GetUnbilledUsageSnapshots :many
+SELECT
+    us.id,
+    us.service_id,
+    s.customer_id,
+    us.window_start,
+    us.window_end,
+    us.primary_bytes,
+    us.backup_bytes
+FROM usage_snapshots us
+JOIN services s ON s.id = us.service_id
+WHERE us.invoice_id IS NULL
+  AND us.window_end <= $1
+  AND us.window_end > $2
+ORDER BY us.window_start
+`
+
+type GetUnbilledUsageSnapshotsParams struct {
+	WindowEnd   time.Time `json:"window_end"`
+	WindowStart time.Time `json:"window_start"`
+}
+
+type GetUnbilledUsageSnapshotsRow struct {
+	ID           int64     `json:"id"`
+	ServiceID    int64     `json:"service_id"`
+	CustomerID   int64     `json:"customer_id"`
+	WindowStart  time.Time `json:"window_start"`
+	WindowEnd    time.Time `json:"window_end"`
+	PrimaryBytes int64     `json:"primary_bytes"`
+	BackupBytes  int64     `json:"backup_bytes"`
+}
+
+func (q *Queries) GetUnbilledUsageSnapshots(ctx context.Context, arg GetUnbilledUsageSnapshotsParams) ([]GetUnbilledUsageSnapshotsRow, error) {
+	rows, err := q.db.QueryContext(ctx, getUnbilledUsageSnapshots, arg.WindowEnd, arg.WindowStart)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []GetUnbilledUsageSnapshotsRow{}
+	for rows.Next() {
+		var i GetUnbilledUsageSnapshotsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.ServiceID,
+			&i.CustomerID,
+			&i.WindowStart,
+			&i.WindowEnd,
+			&i.PrimaryBytes,
+			&i.BackupBytes,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const insertInvoice = `-- name: InsertInvoice :one
+INSERT INTO invoices (customer_id, period_start, period_end, subtotal_cents, discount_cents, total_cents)
+VALUES ($1, $2, $3, $4, $5, $6)
+RETURNING id, customer_id, period_start, period_end, subtotal_cents, discount_cents, total_cents, created_at
+`
+
+type InsertInvoiceParams struct {
+	CustomerID    int64     `json:"customer_id"`
+	PeriodStart   time.Time `json:"period_start"`
+	PeriodEnd     time.Time `json:"period_end"`
+	SubtotalCents int64     `json:"subtotal_cents"`
+	DiscountCents int64     `json:"discount_cents"`
+	TotalCents    int64     `json:"total_cents"`
+}
+
+func (q *Queries) InsertInvoice(ctx context.Context, arg InsertInvoiceParams) (Invoice, error) {
+	row := q.db.QueryRowContext(ctx, insertInvoice,
+		arg.CustomerID,
+		arg.PeriodStart,
+		arg.PeriodEnd,
+		arg.SubtotalCents,
+		arg.DiscountCents,
+		arg.TotalCents,
+	)
+	var i Invoice
+	err := row.Scan(
+		&i.ID,
+		&i.CustomerID,
+		&i.PeriodStart,
+		&i.PeriodEnd,
+		&i.SubtotalCents,
+		&i.DiscountCents,
+		&i.TotalCents,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const insertInvoiceLineItem = `-- name: InsertInvoiceLineItem :one
+INSERT INTO invoice_line_items (
+    invoice_id,
+    service_id,
+    window_start,
+    window_end,
+    primary_bytes,
+    backup_bytes,
+    coverage_factor,
+    amount_cents,
+    discount_cents
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+RETURNING id, invoice_id, service_id, window_start, window_end, primary_bytes, backup_bytes, coverage_factor, amount_cents, discount_cents, created_at
+`
+
+type InsertInvoiceLineItemParams struct {
+	InvoiceID      int64     `json:"invoice_id"`
+	ServiceID      int64     `json:"service_id"`
+	WindowStart    time.Time `json:"window_start"`
+	WindowEnd      time.Time `json:"window_end"`
+	PrimaryBytes   int64     `json:"primary_bytes"`
+	BackupBytes    int64     `json:"backup_bytes"`
+	CoverageFactor float64   `json:"coverage_factor"`
+	AmountCents    int64     `json:"amount_cents"`
+	DiscountCents  int64     `json:"discount_cents"`
+}
+
+func (q *Queries) InsertInvoiceLineItem(ctx context.Context, arg InsertInvoiceLineItemParams) (InvoiceLineItem, error) {
+	row := q.db.QueryRowContext(ctx, insertInvoiceLineItem,
+		arg.InvoiceID,
+		arg.ServiceID,
+		arg.WindowStart,
+		arg.WindowEnd,
+		arg.PrimaryBytes,
+		arg.BackupBytes,
+		arg.CoverageFactor,
+		arg.AmountCents,
+		arg.DiscountCents,
+	)
+	var i InvoiceLineItem
+	err := row.Scan(
+		&i.ID,
+		&i.InvoiceID,
+		&i.ServiceID,
+		&i.WindowStart,
+		&i.WindowEnd,
+		&i.PrimaryBytes,
+		&i.BackupBytes,
+		&i.CoverageFactor,
+		&i.AmountCents,
+		&i.DiscountCents,
+		&i.CreatedAt,
+	)
+	return i, err
 }
 
 const insertStormEvent = `-- name: InsertStormEvent :one
@@ -264,4 +475,20 @@ func (q *Queries) MarkStormEventResolved(ctx context.Context, arg MarkStormEvent
 		&i.EndedAt,
 	)
 	return i, err
+}
+
+const markUsageSnapshotInvoiced = `-- name: MarkUsageSnapshotInvoiced :exec
+UPDATE usage_snapshots
+SET invoice_id = $1
+WHERE id = $2
+`
+
+type MarkUsageSnapshotInvoicedParams struct {
+	InvoiceID sql.NullInt64 `json:"invoice_id"`
+	ID        int64         `json:"id"`
+}
+
+func (q *Queries) MarkUsageSnapshotInvoiced(ctx context.Context, arg MarkUsageSnapshotInvoicedParams) error {
+	_, err := q.db.ExecContext(ctx, markUsageSnapshotInvoiced, arg.InvoiceID, arg.ID)
+	return err
 }
