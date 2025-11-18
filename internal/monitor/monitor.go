@@ -72,6 +72,7 @@ func (s *Scheduler) Run(ctx context.Context) {
 			targets, err := s.targetsForService(ctx, svc)
 			if err != nil {
 				s.log.Printf("GetServiceDomains(service=%d): %v", svc.ID, err)
+				s.preserveExistingLoops(active, svc.ID)
 				continue
 			}
 			for _, target := range targets {
@@ -109,6 +110,17 @@ func (s *Scheduler) stopMissingLoops(active map[string]struct{}) {
 		}
 		cancel()
 		delete(s.loops, id)
+	}
+}
+
+func (s *Scheduler) preserveExistingLoops(active map[string]struct{}, serviceID int64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	prefix := fmt.Sprintf("%d:", serviceID)
+	for id := range s.loops {
+		if strings.HasPrefix(id, prefix) {
+			active[id] = struct{}{}
+		}
 	}
 }
 
