@@ -21,13 +21,13 @@ func main() {
 	cfg := config.Load()
 	logger := logging.New()
 
-	dbConn, err := db.Open(ctx, cfg.PGDSN)
+	sqlDB, queries, err := db.Open(ctx, cfg.PGDSN)
 	if err != nil {
 		logger.Fatalf("opening db: %v", err)
 	}
-	defer dbConn.Close()
+	defer sqlDB.Close()
 
-	api := httpapi.NewServer(logger, dbConn)
+	api := httpapi.NewServer(logger, queries)
 
 	srv := &http.Server{
 		Addr:    cfg.HTTPAddr,
