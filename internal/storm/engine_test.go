@@ -17,7 +17,7 @@ func TestEvaluatePolicyStartsStorm(t *testing.T) {
 	now := time.Unix(1700000000, 0).UTC()
 	eng.now = func() time.Time { return now }
 
-	policy := db.GetStormPoliciesForServiceRow{Kind: "failover", ThresholdAvail: 0.9, WindowSeconds: 60, CooldownSeconds: 300}
+	policy := db.StormPolicy{Kind: "failover", ThresholdAvail: 0.9, WindowSeconds: 60, CooldownSeconds: 300}
 	if err := eng.evaluatePolicy(context.Background(), 1, policy); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -42,7 +42,7 @@ func TestEvaluatePolicyHonorsCooldown(t *testing.T) {
 		EndedAt:   sql.NullTime{Valid: true, Time: now.Add(-10 * time.Second)},
 	}
 
-	policy := db.GetStormPoliciesForServiceRow{Kind: "failover", ThresholdAvail: 0.9, WindowSeconds: 60, CooldownSeconds: 60}
+	policy := db.StormPolicy{Kind: "failover", ThresholdAvail: 0.9, WindowSeconds: 60, CooldownSeconds: 60}
 	if err := eng.evaluatePolicy(context.Background(), 1, policy); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -62,7 +62,7 @@ func TestEvaluatePolicyResolvesStorm(t *testing.T) {
 	store.active[store.key(1, "failover")] = active
 	store.last[store.key(1, "failover")] = active
 
-	policy := db.GetStormPoliciesForServiceRow{Kind: "failover", ThresholdAvail: 0.9, WindowSeconds: 60, CooldownSeconds: 60}
+	policy := db.StormPolicy{Kind: "failover", ThresholdAvail: 0.9, WindowSeconds: 60, CooldownSeconds: 60}
 	if err := eng.evaluatePolicy(context.Background(), 1, policy); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -105,11 +105,11 @@ func (f *fakeStormStore) key(serviceID int64, kind string) string {
 	return fmt.Sprintf("%d-%s", serviceID, kind)
 }
 
-func (f *fakeStormStore) GetActiveServices(ctx context.Context) ([]db.GetActiveServicesRow, error) {
+func (f *fakeStormStore) GetActiveServices(ctx context.Context) ([]db.Service, error) {
 	return nil, nil
 }
 
-func (f *fakeStormStore) GetStormPoliciesForService(ctx context.Context, serviceID int64) ([]db.GetStormPoliciesForServiceRow, error) {
+func (f *fakeStormStore) GetStormPoliciesForService(ctx context.Context, serviceID int64) ([]db.StormPolicy, error) {
 	return nil, nil
 }
 
