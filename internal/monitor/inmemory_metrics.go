@@ -6,8 +6,8 @@ import (
 )
 
 type probeSample struct {
-	t   time.Time
-	ok  bool
+	t  time.Time
+	ok bool
 }
 
 type InMemoryMetrics struct {
@@ -41,7 +41,7 @@ func (m *InMemoryMetrics) Availability(serviceID int64, window time.Duration) fl
 	}
 
 	// drop old
-	idx := 0
+	idx := len(s)
 	for i, sample := range s {
 		if sample.t.After(cutoff) {
 			idx = i
@@ -49,12 +49,13 @@ func (m *InMemoryMetrics) Availability(serviceID int64, window time.Duration) fl
 		}
 	}
 	s = s[idx:]
+	if len(s) == 0 {
+		m.samples[serviceID] = nil
+		return 1.0
+	}
 	m.samples[serviceID] = s
 
 	total := len(s)
-	if total == 0 {
-		return 1.0
-	}
 	okCount := 0
 	for _, sample := range s {
 		if sample.ok {
