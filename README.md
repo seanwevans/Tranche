@@ -11,32 +11,6 @@ This repo is intentionally small and boring:
   - HTTP control-plane API
   - billing/invoicing batch work
 
-## Layout
-
-```text
-cmd/
-  control-plane/   # HTTP API + config surface
-  prober/          # active checks + storm detection
-  dns-operator/    # applies routing decisions to DNS
-  billing-worker/  # periodic billing runs
-
-internal/
-  config/          # env var config loader
-  logging/         # logger helper
-  db/              # sqlc target package (queries.sql + db.go)
-  httpapi/         # chi-based HTTP handlers
-  domain/          # pure types (Service, StormPolicy, ...)
-  storm/           # storm detection engine (uses MetricsView + db)
-  monitor/         # prober + in-memory metrics
-  routing/         # desired primary/backup weights from storms
-  dns/             # DNS Provider interface (+ noop impl)
-  billing/         # stub billing engine
-
-migrations/
-  0001_init.sql    # Postgres schema
-sqlc.yaml          # sqlc config (generate Go from queries.sql)
-```
-
 ## Quick start
 
 ### 1. Postgres
