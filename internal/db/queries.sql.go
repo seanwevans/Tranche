@@ -7,40 +7,33 @@ package db
 
 import (
 	"context"
+	"database/sql"
 )
 
 const getActiveServices = `-- name: GetActiveServices :many
-
-SELECT id, customer_id, name, primary_cdn, backup_cdn
+SELECT id, customer_id, name, primary_cdn, backup_cdn, created_at, deleted_at
 FROM services
 WHERE deleted_at IS NULL
 ORDER BY id
 `
 
-type GetActiveServicesRow struct {
-	ID         int64  `json:"id"`
-	CustomerID int64  `json:"customer_id"`
-	Name       string `json:"name"`
-	PrimaryCdn string `json:"primary_cdn"`
-	BackupCdn  string `json:"backup_cdn"`
-}
-
-// Services
-func (q *Queries) GetActiveServices(ctx context.Context) ([]GetActiveServicesRow, error) {
+func (q *Queries) GetActiveServices(ctx context.Context) ([]Service, error) {
 	rows, err := q.db.QueryContext(ctx, getActiveServices)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	items := []GetActiveServicesRow{}
+	items := []Service{}
 	for rows.Next() {
-		var i GetActiveServicesRow
+		var i Service
 		if err := rows.Scan(
 			&i.ID,
 			&i.CustomerID,
 			&i.Name,
 			&i.PrimaryCdn,
 			&i.BackupCdn,
+			&i.CreatedAt,
+			&i.DeletedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -55,29 +48,57 @@ func (q *Queries) GetActiveServices(ctx context.Context) ([]GetActiveServicesRow
 	return items, nil
 }
 
+const getActiveStormForPolicy = `-- name: GetActiveStormForPolicy :one
+SELECT id, service_id, kind, started_at, ended_at
+FROM storm_events
+WHERE service_id = $1
+  AND kind = $2
+  AND ended_at IS NULL
+ORDER BY started_at DESC
+LIMIT 1
+`
+
+type GetActiveStormForPolicyParams struct {
+	ServiceID int64  `json:"service_id"`
+	Kind      string `json:"kind"`
+}
+
+func (q *Queries) GetActiveStormForPolicy(ctx context.Context, arg GetActiveStormForPolicyParams) (StormEvent, error) {
+	row := q.db.QueryRowContext(ctx, getActiveStormForPolicy, arg.ServiceID, arg.Kind)
+	var i StormEvent
+	err := row.Scan(
+		&i.ID,
+		&i.ServiceID,
+		&i.Kind,
+		&i.StartedAt,
+		&i.EndedAt,
+	)
+	return i, err
+}
+
 const getActiveStormsForService = `-- name: GetActiveStormsForService :many
-SELECT id, service_id, kind
+SELECT id, service_id, kind, started_at, ended_at
 FROM storm_events
 WHERE service_id = $1
   AND ended_at IS NULL
 `
 
-type GetActiveStormsForServiceRow struct {
-	ID        int64  `json:"id"`
-	ServiceID int64  `json:"service_id"`
-	Kind      string `json:"kind"`
-}
-
-func (q *Queries) GetActiveStormsForService(ctx context.Context, serviceID int64) ([]GetActiveStormsForServiceRow, error) {
+func (q *Queries) GetActiveStormsForService(ctx context.Context, serviceID int64) ([]StormEvent, error) {
 	rows, err := q.db.QueryContext(ctx, getActiveStormsForService, serviceID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	items := []GetActiveStormsForServiceRow{}
+	items := []StormEvent{}
 	for rows.Next() {
-		var i GetActiveStormsForServiceRow
-		if err := rows.Scan(&i.ID, &i.ServiceID, &i.Kind); err != nil {
+		var i StormEvent
+		if err := rows.Scan(
+			&i.ID,
+			&i.ServiceID,
+			&i.Kind,
+			&i.StartedAt,
+			&i.EndedAt,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -91,29 +112,55 @@ func (q *Queries) GetActiveStormsForService(ctx context.Context, serviceID int64
 	return items, nil
 }
 
+const getLastStormEvent = `-- name: GetLastStormEvent :one
+SELECT id, service_id, kind, started_at, ended_at
+FROM storm_events
+WHERE service_id = $1
+  AND kind = $2
+ORDER BY started_at DESC
+LIMIT 1
+`
+
+type GetLastStormEventParams struct {
+	ServiceID int64  `json:"service_id"`
+	Kind      string `json:"kind"`
+}
+
+func (q *Queries) GetLastStormEvent(ctx context.Context, arg GetLastStormEventParams) (StormEvent, error) {
+	row := q.db.QueryRowContext(ctx, getLastStormEvent, arg.ServiceID, arg.Kind)
+	var i StormEvent
+	err := row.Scan(
+		&i.ID,
+		&i.ServiceID,
+		&i.Kind,
+		&i.StartedAt,
+		&i.EndedAt,
+	)
+	return i, err
+}
+
 const getServiceDomains = `-- name: GetServiceDomains :many
-SELECT id, service_id, name
+SELECT id, service_id, name, created_at
 FROM service_domains
 WHERE service_id = $1
 ORDER BY id
 `
 
-type GetServiceDomainsRow struct {
-	ID        int64  `json:"id"`
-	ServiceID int64  `json:"service_id"`
-	Name      string `json:"name"`
-}
-
-func (q *Queries) GetServiceDomains(ctx context.Context, serviceID int64) ([]GetServiceDomainsRow, error) {
+func (q *Queries) GetServiceDomains(ctx context.Context, serviceID int64) ([]ServiceDomain, error) {
 	rows, err := q.db.QueryContext(ctx, getServiceDomains, serviceID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	items := []GetServiceDomainsRow{}
+	items := []ServiceDomain{}
 	for rows.Next() {
-		var i GetServiceDomainsRow
-		if err := rows.Scan(&i.ID, &i.ServiceID, &i.Name); err != nil {
+		var i ServiceDomain
+		if err := rows.Scan(
+			&i.ID,
+			&i.ServiceID,
+			&i.Name,
+			&i.CreatedAt,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -128,33 +175,21 @@ func (q *Queries) GetServiceDomains(ctx context.Context, serviceID int64) ([]Get
 }
 
 const getStormPoliciesForService = `-- name: GetStormPoliciesForService :many
-
-SELECT id, service_id, kind, threshold_avail, window_seconds, cooldown_seconds, max_coverage_factor
+SELECT id, service_id, kind, threshold_avail, window_seconds, cooldown_seconds, max_coverage_factor, created_at
 FROM storm_policies
 WHERE service_id = $1
 ORDER BY id
 `
 
-type GetStormPoliciesForServiceRow struct {
-	ID                int64   `json:"id"`
-	ServiceID         int64   `json:"service_id"`
-	Kind              string  `json:"kind"`
-	ThresholdAvail    float64 `json:"threshold_avail"`
-	WindowSeconds     int32   `json:"window_seconds"`
-	CooldownSeconds   int32   `json:"cooldown_seconds"`
-	MaxCoverageFactor float64 `json:"max_coverage_factor"`
-}
-
-// Storm policies/events
-func (q *Queries) GetStormPoliciesForService(ctx context.Context, serviceID int64) ([]GetStormPoliciesForServiceRow, error) {
+func (q *Queries) GetStormPoliciesForService(ctx context.Context, serviceID int64) ([]StormPolicy, error) {
 	rows, err := q.db.QueryContext(ctx, getStormPoliciesForService, serviceID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	items := []GetStormPoliciesForServiceRow{}
+	items := []StormPolicy{}
 	for rows.Next() {
-		var i GetStormPoliciesForServiceRow
+		var i StormPolicy
 		if err := rows.Scan(
 			&i.ID,
 			&i.ServiceID,
@@ -163,6 +198,7 @@ func (q *Queries) GetStormPoliciesForService(ctx context.Context, serviceID int6
 			&i.WindowSeconds,
 			&i.CooldownSeconds,
 			&i.MaxCoverageFactor,
+			&i.CreatedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -180,7 +216,7 @@ func (q *Queries) GetStormPoliciesForService(ctx context.Context, serviceID int6
 const insertStormEvent = `-- name: InsertStormEvent :one
 INSERT INTO storm_events (service_id, kind)
 VALUES ($1, $2)
-RETURNING id, service_id, kind
+RETURNING id, service_id, kind, started_at, ended_at
 `
 
 type InsertStormEventParams struct {
@@ -188,15 +224,40 @@ type InsertStormEventParams struct {
 	Kind      string `json:"kind"`
 }
 
-type InsertStormEventRow struct {
-	ID        int64  `json:"id"`
-	ServiceID int64  `json:"service_id"`
-	Kind      string `json:"kind"`
+func (q *Queries) InsertStormEvent(ctx context.Context, arg InsertStormEventParams) (StormEvent, error) {
+	row := q.db.QueryRowContext(ctx, insertStormEvent, arg.ServiceID, arg.Kind)
+	var i StormEvent
+	err := row.Scan(
+		&i.ID,
+		&i.ServiceID,
+		&i.Kind,
+		&i.StartedAt,
+		&i.EndedAt,
+	)
+	return i, err
 }
 
-func (q *Queries) InsertStormEvent(ctx context.Context, arg InsertStormEventParams) (InsertStormEventRow, error) {
-	row := q.db.QueryRowContext(ctx, insertStormEvent, arg.ServiceID, arg.Kind)
-	var i InsertStormEventRow
-	err := row.Scan(&i.ID, &i.ServiceID, &i.Kind)
+const markStormEventResolved = `-- name: MarkStormEventResolved :one
+UPDATE storm_events
+SET ended_at = $2
+WHERE id = $1
+RETURNING id, service_id, kind, started_at, ended_at
+`
+
+type MarkStormEventResolvedParams struct {
+	ID      int64        `json:"id"`
+	EndedAt sql.NullTime `json:"ended_at"`
+}
+
+func (q *Queries) MarkStormEventResolved(ctx context.Context, arg MarkStormEventResolvedParams) (StormEvent, error) {
+	row := q.db.QueryRowContext(ctx, markStormEventResolved, arg.ID, arg.EndedAt)
+	var i StormEvent
+	err := row.Scan(
+		&i.ID,
+		&i.ServiceID,
+		&i.Kind,
+		&i.StartedAt,
+		&i.EndedAt,
+	)
 	return i, err
 }
