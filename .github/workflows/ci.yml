@@ -12,6 +12,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -30,14 +32,26 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      - name: Verify formatting
+      - name: Format Go code
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          GOFMT_OUTPUT=$(gofmt -l $(git ls-files '*.go'))
-          if [ -n "$GOFMT_OUTPUT" ]; then
-            echo "The following files need gofmt:" >&2
-            echo "$GOFMT_OUTPUT" >&2
-            exit 1
+          GO_FILES=$(git ls-files '*.go')
+          if [ -n "$GO_FILES" ]; then
+            gofmt -w $GO_FILES
+          else
+            echo "No Go files to format."
+          fi
+
+          if ! git diff --quiet; then
+            echo "Formatting changes detected. Committing and pushing..."
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git commit -am "chore: gofmt"
+            git push
+          else
+            echo "No formatting changes to commit."
           fi
 
       - name: Go vet
