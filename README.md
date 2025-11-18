@@ -2,8 +2,6 @@
 
 Early skeleton for the Cloudflare-storm / multi-CDN insurance MVP.
 
-This repo is intentionally small and boring:
-
 - **Postgres** is the source of truth for config, storms, and billing facts.
 - **Go** services do:
   - health probing and storm detection
