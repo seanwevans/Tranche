@@ -28,7 +28,19 @@ func Open(ctx context.Context, dsn string) (*sql.DB, *Queries, error) {
 	return conn, New(conn), nil
 }
 
-func runMigrations(ctx context.Context, conn *sql.DB) error {
+const migrationLockID int64 = 0x7472616e636865 // 'tranche' in hex.
+
+func runMigrations(ctx context.Context, conn *sql.DB) (err error) {
+	if _, err := conn.ExecContext(ctx, `SELECT pg_advisory_lock($1)`, migrationLockID); err != nil {
+		return fmt.Errorf("acquire migration lock: %w", err)
+	}
+	defer func() {
+		unlockCtx := context.WithoutCancel(ctx)
+		if _, unlockErr := conn.ExecContext(unlockCtx, `SELECT pg_advisory_unlock($1)`, migrationLockID); unlockErr != nil && err == nil {
+			err = fmt.Errorf("release migration lock: %w", unlockErr)
+		}
+	}()
+
 	const createTable = `CREATE TABLE IF NOT EXISTS schema_migrations (
                 version TEXT PRIMARY KEY,
                 applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
