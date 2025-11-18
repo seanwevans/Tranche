@@ -26,7 +26,10 @@ func main() {
 	mv := monitor.NewMetricsView(metrics)
 	stormEng := storm.NewEngine(dbConn, mv, logger)
 
-	probeSched := monitor.NewScheduler(dbConn, metrics, logger)
+	probeSched := monitor.NewScheduler(dbConn, metrics, logger, monitor.ProbeConfig{
+		Path:    cfg.ProbePath,
+		Timeout: cfg.ProbeTimeout,
+	})
 
 	go probeSched.Run(ctx)
 
