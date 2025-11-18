@@ -1,47 +1,107 @@
 package db
 
 import (
-	"context"
-	"database/sql"
-
-	_ "github.com/jackc/pgx/v5/stdlib"
+        "context"
+        "database/sql"
+        "time"
 )
 
-// DB wraps a sql.DB connection and exposes the generated query methods.
-type DB struct {
-	*Queries
-	conn *sql.DB
+type Service struct {
+        ID         int64  `json:"id"`
+        CustomerID int64  `json:"customer_id"`
+        Name       string `json:"name"`
+        PrimaryCdn string `json:"primary_cdn"`
+        BackupCdn  string `json:"backup_cdn"`
 }
 
-// Open connects to Postgres using the pgx stdlib driver and prepares the
-// generated query helpers.
-func Open(ctx context.Context, dsn string) (*DB, error) {
-	conn, err := sql.Open("pgx", dsn)
-	if err != nil {
-		return nil, err
-	}
-	if err := conn.PingContext(ctx); err != nil {
-		conn.Close()
-		return nil, err
-	}
-	return &DB{
-		Queries: New(conn),
-		conn:    conn,
-	}, nil
+type ServiceDomain struct {
+        ID        int64  `json:"id"`
+        ServiceID int64  `json:"service_id"`
+        Name      string `json:"name"`
 }
 
-// Close releases the underlying sql.DB connection.
-func (db *DB) Close() error {
-	if db == nil || db.conn == nil {
-		return nil
-	}
-	return db.conn.Close()
+type StormPolicy struct {
+        ID                int64   `json:"id"`
+        ServiceID         int64   `json:"service_id"`
+        Kind              string  `json:"kind"`
+        ThresholdAvail    float64 `json:"threshold_avail"`
+        WindowSeconds     int32   `json:"window_seconds"`
+        CooldownSeconds   int32   `json:"cooldown_seconds"`
+        MaxCoverageFactor float64 `json:"max_coverage_factor"`
 }
 
-// Conn exposes the underlying *sql.DB for callers that need raw access.
-func (db *DB) Conn() *sql.DB {
-	if db == nil {
-		return nil
-	}
-	return db.conn
+type StormEvent struct {
+        ID        int64        `json:"id"`
+        ServiceID int64        `json:"service_id"`
+        Kind      string       `json:"kind"`
+        StartedAt time.Time    `json:"started_at"`
+        EndedAt   sql.NullTime `json:"ended_at"`
+}
+
+type Queries struct {
+        db *sql.DB
+}
+
+func New(db *sql.DB) *Queries {
+        return &Queries{db: db}
+}
+
+func (q *Queries) GetActiveServices(ctx context.Context) ([]Service, error) {
+        // TODO: replaced by sqlc
+        return []Service{}, nil
+}
+
+func (q *Queries) GetServiceDomains(ctx context.Context, serviceID int64) ([]ServiceDomain, error) {
+        // TODO: replaced by sqlc
+        return []ServiceDomain{}, nil
+}
+
+func (q *Queries) GetStormPoliciesForService(ctx context.Context, serviceID int64) ([]StormPolicy, error) {
+        // TODO: replaced by sqlc
+        return []StormPolicy{}, nil
+}
+
+func (q *Queries) GetActiveStormsForService(ctx context.Context, serviceID int64) ([]StormEvent, error) {
+        // TODO: replaced by sqlc
+        return []StormEvent{}, nil
+}
+
+type GetActiveStormForPolicyParams struct {
+        ServiceID int64
+        Kind      string
+}
+
+func (q *Queries) GetActiveStormForPolicy(ctx context.Context, arg GetActiveStormForPolicyParams) (StormEvent, error) {
+        // TODO: replaced by sqlc
+        return StormEvent{}, sql.ErrNoRows
+}
+
+type GetLastStormEventParams struct {
+        ServiceID int64
+        Kind      string
+}
+
+func (q *Queries) GetLastStormEvent(ctx context.Context, arg GetLastStormEventParams) (StormEvent, error) {
+        // TODO: replaced by sqlc
+        return StormEvent{}, sql.ErrNoRows
+}
+
+type InsertStormEventParams struct {
+        ServiceID int64
+        Kind      string
+}
+
+func (q *Queries) InsertStormEvent(ctx context.Context, arg InsertStormEventParams) (StormEvent, error) {
+        // TODO: replaced by sqlc
+        return StormEvent{}, nil
+}
+
+type MarkStormEventResolvedParams struct {
+        ID      int64
+        EndedAt time.Time
+}
+
+func (q *Queries) MarkStormEventResolved(ctx context.Context, arg MarkStormEventResolvedParams) (StormEvent, error) {
+        // TODO: replaced by sqlc
+        return StormEvent{}, nil
 }

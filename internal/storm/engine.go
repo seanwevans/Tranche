@@ -2,10 +2,21 @@ package storm
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"time"
 
 	"tranche/internal/db"
 )
+
+type stormStore interface {
+	GetActiveServices(ctx context.Context) ([]db.Service, error)
+	GetStormPoliciesForService(ctx context.Context, serviceID int64) ([]db.StormPolicy, error)
+	GetActiveStormForPolicy(ctx context.Context, arg db.GetActiveStormForPolicyParams) (db.StormEvent, error)
+	GetLastStormEvent(ctx context.Context, arg db.GetLastStormEventParams) (db.StormEvent, error)
+	InsertStormEvent(ctx context.Context, arg db.InsertStormEventParams) (db.StormEvent, error)
+	MarkStormEventResolved(ctx context.Context, arg db.MarkStormEventResolvedParams) (db.StormEvent, error)
+}
 
 type MetricsView interface {
 	Availability(serviceID int64, window time.Duration) (float64, error)
@@ -16,13 +27,14 @@ type Logger interface {
 }
 
 type Engine struct {
-	db  *db.DB
+	db  stormStore
 	mv  MetricsView
 	log Logger
+	now func() time.Time
 }
 
-func NewEngine(dbx *db.DB, mv MetricsView, log Logger) *Engine {
-	return &Engine{db: dbx, mv: mv, log: log}
+func NewEngine(dbx stormStore, mv MetricsView, log Logger) *Engine {
+	return &Engine{db: dbx, mv: mv, log: log, now: time.Now}
 }
 
 func (e *Engine) Tick(ctx context.Context) error {
@@ -44,17 +56,49 @@ func (e *Engine) Tick(ctx context.Context) error {
 	return nil
 }
 
-func (e *Engine) evaluatePolicy(ctx context.Context, serviceID int64, p db.GetStormPoliciesForServiceRow) error {
-	avail, err := e.mv.Availability(serviceID, time.Duration(p.WindowSeconds)*time.Second)
+func (e *Engine) evaluatePolicy(ctx context.Context, serviceID int64, p db.StormPolicy) error {
+	window := time.Duration(p.WindowSeconds) * time.Second
+	avail, err := e.mv.Availability(serviceID, window)
 	if err != nil {
 		return err
 	}
-	if avail < p.ThresholdAvail {
-		_, err := e.db.InsertStormEvent(ctx, db.InsertStormEventParams{
-			ServiceID: serviceID,
-			Kind:      p.Kind,
-		})
+
+	activeStorm, err := e.db.GetActiveStormForPolicy(ctx, db.GetActiveStormForPolicyParams{ServiceID: serviceID, Kind: p.Kind})
+	hasActive := err == nil
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return err
 	}
+
+	now := e.now()
+	cooldown := time.Duration(p.CooldownSeconds) * time.Second
+
+	if avail < p.ThresholdAvail {
+		if hasActive {
+			return nil
+		}
+
+		lastStorm, err := e.db.GetLastStormEvent(ctx, db.GetLastStormEventParams{ServiceID: serviceID, Kind: p.Kind})
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return err
+		}
+		if err == nil && cooldown > 0 {
+			if lastStorm.EndedAt.Valid {
+				if now.Sub(lastStorm.EndedAt.Time) < cooldown {
+					return nil
+				}
+			} else if now.Sub(lastStorm.StartedAt) < cooldown {
+				return nil
+			}
+		}
+
+		_, err = e.db.InsertStormEvent(ctx, db.InsertStormEventParams{ServiceID: serviceID, Kind: p.Kind})
+		return err
+	}
+
+	if hasActive {
+		_, err = e.db.MarkStormEventResolved(ctx, db.MarkStormEventResolvedParams{ID: activeStorm.ID, EndedAt: now})
+		return err
+	}
+
 	return nil
 }
