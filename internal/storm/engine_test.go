@@ -139,7 +139,7 @@ func (f *fakeStormStore) MarkStormEventResolved(ctx context.Context, arg db.Mark
 	f.resolves = append(f.resolves, arg)
 	for key, storm := range f.active {
 		if storm.ID == arg.ID {
-			storm.EndedAt = sql.NullTime{Valid: true, Time: arg.EndedAt}
+			storm.EndedAt = arg.EndedAt
 			f.active[key] = storm
 			break
 		}
