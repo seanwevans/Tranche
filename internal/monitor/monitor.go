@@ -168,7 +168,7 @@ func (s *Scheduler) doProbe(ctx context.Context, client *http.Client, target pro
 	return client.Do(req)
 }
 
-func (s *Scheduler) targetsForService(ctx context.Context, svc db.GetActiveServicesRow) ([]probeTarget, error) {
+func (s *Scheduler) targetsForService(ctx context.Context, svc db.Service) ([]probeTarget, error) {
 	domains, err := s.db.GetServiceDomains(ctx, svc.ID)
 	if err != nil {
 		return nil, err
