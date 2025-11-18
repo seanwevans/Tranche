@@ -2,6 +2,7 @@ package monitor
 
 import (
 	"context"
+	"io"
 	"net/http"
 	"time"
 
@@ -64,8 +65,12 @@ func (s *Scheduler) probeLoop(ctx context.Context, client *http.Client, serviceI
 		ok := false
 		// TODO: make probe URL configurable per service/domain
 		resp, err := client.Get("https://example.com/healthz")
-		if err == nil && resp.StatusCode < 500 {
-			ok = true
+		if err == nil {
+			_, _ = io.Copy(io.Discard, resp.Body)
+			resp.Body.Close()
+			if resp.StatusCode < 500 {
+				ok = true
+			}
 		}
 		lat := time.Since(start)
 		s.m.RecordProbe(serviceID, ok, lat)
