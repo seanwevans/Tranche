@@ -1,4 +1,4 @@
-# tranche (skeleton)
+# Tranche
 
 Early skeleton for the Cloudflare-storm / multi-CDN insurance MVP.
 
