@@ -57,8 +57,55 @@ Check that it boots:
 ```bash
 curl http://localhost:8080/healthz
 # -> "ok"
-curl http://localhost:8080/v1/services
+curl -H "X-Customer-ID: 1" http://localhost:8080/v1/services
 # -> [] (empty JSON array, until you insert rows)
+```
+
+### Control-plane API
+
+All control-plane requests must include the tenant context via the `X-Customer-ID`
+header (or `customer_id` query parameter). This ensures a caller can only touch
+its own services.
+
+Available endpoints:
+
+| Method & Path | Description |
+| --- | --- |
+| `GET /v1/services` | List active services for the calling customer. |
+| `POST /v1/services` | Create a service (`{"name","primary_cdn","backup_cdn"}`). |
+| `GET /v1/services/{id}` | Fetch a service plus its domains and storm policies. |
+| `PATCH /v1/services/{id}` | Update any subset of `name`, `primary_cdn`, `backup_cdn`. |
+| `DELETE /v1/services/{id}` | Soft delete a service (sets `deleted_at`). |
+| `GET/POST/DELETE /v1/services/{id}/domains` | List, add, or remove service domains. |
+| `GET/POST/PATCH/DELETE /v1/services/{id}/storm-policies` | Manage per-service storm policies. |
+
+Example – create a service, add a domain, and manage policies:
+
+```bash
+curl -X POST http://localhost:8080/v1/services \
+  -H "Content-Type: application/json" \
+  -H "X-Customer-ID: 1" \
+  -d '{
+    "name": "marketing",
+    "primary_cdn": "cloudflare",
+    "backup_cdn": "fastly"
+  }'
+
+curl -X POST http://localhost:8080/v1/services/1/domains \
+  -H "Content-Type: application/json" \
+  -H "X-Customer-ID: 1" \
+  -d '{"name": "app.example.com"}'
+
+curl -X POST http://localhost:8080/v1/services/1/storm-policies \
+  -H "Content-Type: application/json" \
+  -H "X-Customer-ID: 1" \
+  -d '{
+    "kind": "http_availability",
+    "threshold_avail": 0.95,
+    "window_seconds": 60,
+    "cooldown_seconds": 300,
+    "max_coverage_factor": 1.25
+  }'
 ```
 
 ### 4. Run the prober and DNS operator (dev mode)
