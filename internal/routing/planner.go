@@ -12,10 +12,10 @@ type Weights struct {
 }
 
 type Planner struct {
-	db *db.DB
+	db *db.Queries
 }
 
-func NewPlanner(dbx *db.DB) *Planner {
+func NewPlanner(dbx *db.Queries) *Planner {
 	return &Planner{db: dbx}
 }
 

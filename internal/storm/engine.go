@@ -10,8 +10,8 @@ import (
 )
 
 type stormStore interface {
-	GetActiveServices(ctx context.Context) ([]db.Service, error)
-	GetStormPoliciesForService(ctx context.Context, serviceID int64) ([]db.StormPolicy, error)
+	GetActiveServices(ctx context.Context) ([]db.GetActiveServicesRow, error)
+	GetStormPoliciesForService(ctx context.Context, serviceID int64) ([]db.GetStormPoliciesForServiceRow, error)
 	GetActiveStormForPolicy(ctx context.Context, arg db.GetActiveStormForPolicyParams) (db.StormEvent, error)
 	GetLastStormEvent(ctx context.Context, arg db.GetLastStormEventParams) (db.StormEvent, error)
 	InsertStormEvent(ctx context.Context, arg db.InsertStormEventParams) (db.StormEvent, error)
@@ -56,7 +56,7 @@ func (e *Engine) Tick(ctx context.Context) error {
 	return nil
 }
 
-func (e *Engine) evaluatePolicy(ctx context.Context, serviceID int64, p db.StormPolicy) error {
+func (e *Engine) evaluatePolicy(ctx context.Context, serviceID int64, p db.GetStormPoliciesForServiceRow) error {
 	window := time.Duration(p.WindowSeconds) * time.Second
 	avail, err := e.mv.Availability(serviceID, window)
 	if err != nil {
@@ -96,7 +96,7 @@ func (e *Engine) evaluatePolicy(ctx context.Context, serviceID int64, p db.Storm
 	}
 
 	if hasActive {
-		_, err = e.db.MarkStormEventResolved(ctx, db.MarkStormEventResolvedParams{ID: activeStorm.ID, EndedAt: now})
+		_, err = e.db.MarkStormEventResolved(ctx, db.MarkStormEventResolvedParams{ID: activeStorm.ID, EndedAt: sql.NullTime{Time: now, Valid: true}})
 		return err
 	}
 

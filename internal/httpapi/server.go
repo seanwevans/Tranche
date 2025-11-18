@@ -11,7 +11,7 @@ import (
 
 type Server struct {
 	log Logger
-	db  *db.DB
+	db  *db.Queries
 	r   chi.Router
 }
 
@@ -21,7 +21,7 @@ type Logger interface {
 	Fatalf(string, ...any)
 }
 
-func NewServer(log Logger, dbx *db.DB) *Server {
+func NewServer(log Logger, dbx *db.Queries) *Server {
 	s := &Server{log: log, db: dbx, r: chi.NewRouter()}
 	s.routes()
 	return s

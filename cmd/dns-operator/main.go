@@ -16,13 +16,13 @@ func main() {
 	cfg := config.Load()
 	logger := logging.New()
 
-	dbConn, err := db.Open(ctx, cfg.PGDSN)
+	sqlDB, queries, err := db.Open(ctx, cfg.PGDSN)
 	if err != nil {
 		logger.Fatalf("opening db: %v", err)
 	}
-	defer dbConn.Close()
+	defer sqlDB.Close()
 
-	planner := routing.NewPlanner(dbConn)
+	planner := routing.NewPlanner(queries)
 	dnsProv := dns.NewNoopProvider(logger) // replace with Route53/NS1 impl
 
 	ticker := time.NewTicker(15 * time.Second)
@@ -33,7 +33,7 @@ func main() {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			services, err := dbConn.GetActiveServices(ctx)
+			services, err := queries.GetActiveServices(ctx)
 			if err != nil {
 				logger.Printf("GetActiveServices: %v", err)
 				continue
@@ -44,7 +44,7 @@ func main() {
 					logger.Printf("DesiredRouting(service=%d): %v", s.ID, err)
 					continue
 				}
-				domains, err := dbConn.GetServiceDomains(ctx, s.ID)
+				domains, err := queries.GetServiceDomains(ctx, s.ID)
 				if err != nil {
 					logger.Printf("GetServiceDomains(service=%d): %v", s.ID, err)
 					continue

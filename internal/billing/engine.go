@@ -12,11 +12,11 @@ type Logger interface {
 }
 
 type Engine struct {
-	db  *db.DB
+	db  *db.Queries
 	log Logger
 }
 
-func NewEngine(dbx *db.DB, log Logger) *Engine {
+func NewEngine(dbx *db.Queries, log Logger) *Engine {
 	return &Engine{db: dbx, log: log}
 }
 
