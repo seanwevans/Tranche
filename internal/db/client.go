@@ -9,21 +9,28 @@ import (
 
 type DB struct {
 	*Queries
-	db *sql.DB
+	conn *sql.DB
 }
 
 func Open(ctx context.Context, dsn string) (*DB, error) {
-	db, err := sql.Open("pgx", dsn)
+	conn, err := sql.Open("pgx", dsn)
 	if err != nil {
 		return nil, err
 	}
-	if err := db.PingContext(ctx); err != nil {
-		db.Close()
+	if err := conn.PingContext(ctx); err != nil {
+		conn.Close()
 		return nil, err
 	}
-	return &DB{Queries: New(db), db: db}, nil
+	return &DB{Queries: New(conn), conn: conn}, nil
 }
 
-func (c *DB) Close() error {
-	return c.db.Close()
+func (dbx *DB) Close() error {
+	if dbx == nil || dbx.conn == nil {
+		return nil
+	}
+	return dbx.conn.Close()
+}
+
+func (dbx *DB) Conn() *sql.DB {
+	return dbx.conn
 }
