@@ -6,8 +6,8 @@ import (
 )
 
 type probeSample struct {
-	t   time.Time
-	ok  bool
+	t  time.Time
+	ok bool
 }
 
 type InMemoryMetrics struct {

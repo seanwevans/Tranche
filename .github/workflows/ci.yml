@@ -1,0 +1,36 @@
+name: CI
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Verify formatting
+        run: |
+          set -euo pipefail
+          GOFMT_OUTPUT=$(gofmt -l $(git ls-files '*.go'))
+          if [ -n "$GOFMT_OUTPUT" ]; then
+            echo "The following files need gofmt:" >&2
+            echo "$GOFMT_OUTPUT" >&2
+            exit 1
+          fi
+
+      - name: Go vet
+        run: go vet ./...
+
+      - name: Go test
+        run: go test ./...
