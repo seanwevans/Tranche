@@ -1,7 +1,3 @@
-// NOTE: This file is a placeholder so `go build` works out of the box.
-// Replace it by running `sqlc generate`, which will overwrite this file
-// using `internal/db/queries.sql` and `migrations/`.
-
 package db
 
 import (

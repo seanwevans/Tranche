@@ -12,19 +12,22 @@ type probeSample struct {
 
 type InMemoryMetrics struct {
 	mu      sync.Mutex
-	samples map[int64][]probeSample
+	samples map[int64]map[string][]probeSample
 }
 
 func NewInMemoryMetrics() *InMemoryMetrics {
 	return &InMemoryMetrics{
-		samples: make(map[int64][]probeSample),
+		samples: make(map[int64]map[string][]probeSample),
 	}
 }
 
-func (m *InMemoryMetrics) RecordProbe(serviceID int64, ok bool, _ time.Duration) {
+func (m *InMemoryMetrics) RecordProbe(serviceID int64, target string, ok bool, _ time.Duration) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.samples[serviceID] = append(m.samples[serviceID], probeSample{
+	if _, ok := m.samples[serviceID]; !ok {
+		m.samples[serviceID] = make(map[string][]probeSample)
+	}
+	m.samples[serviceID][target] = append(m.samples[serviceID][target], probeSample{
 		t:  time.Now(),
 		ok: ok,
 	})
@@ -35,32 +38,44 @@ func (m *InMemoryMetrics) Availability(serviceID int64, window time.Duration) fl
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	s := m.samples[serviceID]
-	if len(s) == 0 {
+	targets := m.samples[serviceID]
+	if len(targets) == 0 {
 		return 1.0
 	}
 
-	// drop old
-	idx := len(s)
-	for i, sample := range s {
-		if sample.t.After(cutoff) {
-			idx = i
-			break
-		}
-	}
-	s = s[idx:]
-	if len(s) == 0 {
-		m.samples[serviceID] = nil
-		return 1.0
-	}
-	m.samples[serviceID] = s
-
-	total := len(s)
+	total := 0
 	okCount := 0
-	for _, sample := range s {
-		if sample.ok {
-			okCount++
+	emptyTargets := make([]string, 0)
+	for target, samples := range targets {
+		idx := len(samples)
+		for i, sample := range samples {
+			if sample.t.After(cutoff) {
+				idx = i
+				break
+			}
 		}
+		samples = samples[idx:]
+		if len(samples) == 0 {
+			emptyTargets = append(emptyTargets, target)
+			continue
+		}
+		targets[target] = samples
+		total += len(samples)
+		for _, sample := range samples {
+			if sample.ok {
+				okCount++
+			}
+		}
+	}
+	for _, t := range emptyTargets {
+		delete(targets, t)
+	}
+	if len(targets) == 0 {
+		delete(m.samples, serviceID)
+		return 1.0
+	}
+	if total == 0 {
+		return 1.0
 	}
 	return float64(okCount) / float64(total)
 }
