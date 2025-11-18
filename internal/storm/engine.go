@@ -44,16 +44,16 @@ func (e *Engine) Tick(ctx context.Context) error {
 	return nil
 }
 
-func (e *Engine) evaluatePolicy(ctx context.Context, serviceID int64, p db.StormPolicy) error {
+func (e *Engine) evaluatePolicy(ctx context.Context, serviceID int64, p db.GetStormPoliciesForServiceRow) error {
 	avail, err := e.mv.Availability(serviceID, time.Duration(p.WindowSeconds)*time.Second)
 	if err != nil {
 		return err
 	}
 	if avail < p.ThresholdAvail {
-		_, err := e.db.InsertStormEvent(ctx, struct {
-			ServiceID int64
-			Kind      string
-		}{ServiceID: serviceID, Kind: p.Kind})
+		_, err := e.db.InsertStormEvent(ctx, db.InsertStormEventParams{
+			ServiceID: serviceID,
+			Kind:      p.Kind,
+		})
 		return err
 	}
 	return nil
