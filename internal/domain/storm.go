@@ -5,8 +5,8 @@ import "time"
 type StormKind string
 
 const (
-	StormKindCloudflareDNSGlobal  StormKind = "CF_DNS_GLOBAL"
-	StormKindCloudflareProxyDegraded        = "CF_PROXY_DEGRADED"
+	StormKindCloudflareDNSGlobal     StormKind = "CF_DNS_GLOBAL"
+	StormKindCloudflareProxyDegraded           = "CF_PROXY_DEGRADED"
 )
 
 type StormPolicy struct {
