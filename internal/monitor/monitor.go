@@ -39,7 +39,7 @@ type ProbeConfig struct {
 }
 
 type Scheduler struct {
-	db    *db.DB
+	db    *db.Queries
 	m     MetricsRecorder
 	log   Logger
 	cfg   ProbeConfig
@@ -47,7 +47,7 @@ type Scheduler struct {
 	loops map[string]context.CancelFunc
 }
 
-func NewScheduler(dbx *db.DB, mr MetricsRecorder, log Logger, cfg ProbeConfig) *Scheduler {
+func NewScheduler(dbx *db.Queries, mr MetricsRecorder, log Logger, cfg ProbeConfig) *Scheduler {
 	return &Scheduler{db: dbx, m: mr, log: log, cfg: cfg, loops: make(map[string]context.CancelFunc)}
 }
 
@@ -168,7 +168,7 @@ func (s *Scheduler) doProbe(ctx context.Context, client *http.Client, target pro
 	return client.Do(req)
 }
 
-func (s *Scheduler) targetsForService(ctx context.Context, svc db.Service) ([]probeTarget, error) {
+func (s *Scheduler) targetsForService(ctx context.Context, svc db.GetActiveServicesRow) ([]probeTarget, error) {
 	domains, err := s.db.GetServiceDomains(ctx, svc.ID)
 	if err != nil {
 		return nil, err

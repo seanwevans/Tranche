@@ -16,17 +16,17 @@ func main() {
 	cfg := config.Load()
 	logger := logging.New()
 
-	dbConn, err := db.Open(ctx, cfg.PGDSN)
+	sqlDB, queries, err := db.Open(ctx, cfg.PGDSN)
 	if err != nil {
 		logger.Fatalf("opening db: %v", err)
 	}
-	defer dbConn.Close()
+	defer sqlDB.Close()
 
 	metrics := monitor.NewInMemoryMetrics()
 	mv := monitor.NewMetricsView(metrics)
-	stormEng := storm.NewEngine(dbConn, mv, logger)
+	stormEng := storm.NewEngine(queries, mv, logger)
 
-	probeSched := monitor.NewScheduler(dbConn, metrics, logger, monitor.ProbeConfig{
+	probeSched := monitor.NewScheduler(queries, metrics, logger, monitor.ProbeConfig{
 		Path:    cfg.ProbePath,
 		Timeout: cfg.ProbeTimeout,
 	})

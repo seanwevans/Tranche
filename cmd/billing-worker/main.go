@@ -15,13 +15,13 @@ func main() {
 	cfg := config.Load()
 	logger := logging.New()
 
-	dbConn, err := db.Open(ctx, cfg.PGDSN)
+	sqlDB, queries, err := db.Open(ctx, cfg.PGDSN)
 	if err != nil {
 		logger.Fatalf("opening db: %v", err)
 	}
-	defer dbConn.Close()
+	defer sqlDB.Close()
 
-	engine := billing.NewEngine(dbConn, logger)
+	engine := billing.NewEngine(queries, logger)
 
 	ticker := time.NewTicker(1 * time.Minute)
 	defer ticker.Stop()

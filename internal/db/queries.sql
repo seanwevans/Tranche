@@ -1,5 +1,3 @@
--- Services
-
 -- name: GetActiveServices :many
 SELECT *
 FROM services
@@ -11,8 +9,6 @@ SELECT *
 FROM service_domains
 WHERE service_id = $1
 ORDER BY id;
-
--- Storm policies/events
 
 -- name: GetStormPoliciesForService :many
 SELECT *
