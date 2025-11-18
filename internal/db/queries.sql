@@ -1,13 +1,13 @@
 -- Services
 
 -- name: GetActiveServices :many
-SELECT id, customer_id, name, primary_cdn, backup_cdn
+SELECT *
 FROM services
 WHERE deleted_at IS NULL
 ORDER BY id;
 
 -- name: GetServiceDomains :many
-SELECT id, service_id, name
+SELECT *
 FROM service_domains
 WHERE service_id = $1
 ORDER BY id;
@@ -15,7 +15,7 @@ ORDER BY id;
 -- Storm policies/events
 
 -- name: GetStormPoliciesForService :many
-SELECT id, service_id, kind, threshold_avail, window_seconds, cooldown_seconds, max_coverage_factor
+SELECT *
 FROM storm_policies
 WHERE service_id = $1
 ORDER BY id;

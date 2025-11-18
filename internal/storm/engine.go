@@ -96,7 +96,7 @@ func (e *Engine) evaluatePolicy(ctx context.Context, serviceID int64, p db.Storm
 	}
 
 	if hasActive {
-		_, err = e.db.MarkStormEventResolved(ctx, db.MarkStormEventResolvedParams{ID: activeStorm.ID, EndedAt: now})
+		_, err = e.db.MarkStormEventResolved(ctx, db.MarkStormEventResolvedParams{ID: activeStorm.ID, EndedAt: sql.NullTime{Time: now, Valid: true}})
 		return err
 	}
 
