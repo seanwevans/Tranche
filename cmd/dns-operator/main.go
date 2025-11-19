@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"tranche/internal/config"
@@ -12,7 +14,8 @@ import (
 )
 
 func main() {
-	ctx := context.Background()
+	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer cancel()
 	cfg := config.Load()
 	logger := logging.New()
 
@@ -20,7 +23,6 @@ func main() {
 	if err != nil {
 		logger.Fatalf("opening db: %v", err)
 	}
-	defer sqlDB.Close()
 
 	planner := routing.NewPlanner(queries)
 	var dnsProv dns.Provider = dns.NewNoopProvider(logger)
@@ -40,11 +42,13 @@ func main() {
 	}
 
 	ticker := time.NewTicker(15 * time.Second)
-	defer ticker.Stop()
 
 	for {
 		select {
 		case <-ctx.Done():
+			logger.Println("shutting down dns-operator")
+			ticker.Stop()
+			_ = sqlDB.Close()
 			return
 		case <-ticker.C:
 			services, err := queries.GetActiveServices(ctx)
