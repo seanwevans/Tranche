@@ -123,7 +123,7 @@ Right now they:
 - Prober: runs a dummy HTTPS GET against `https://example.com/healthz` for each service (TODO: wire real domains).
 - Storm engine: checks in-memory metrics; if availability < threshold, inserts a `storm_events` row.
 - DNS operator: reads `storm_events` and calls the **noop** DNS provider (logs intended weight changes).
-- Billing worker: logs a stub line on each tick.
+- Billing worker: ingests unbilled `usage_snapshots`, joins active `storm_events`, and persists invoices + line items while logging each invoice ID for observability.
 
 ### 5. Wiring to real DNS/CDN (next steps)
 
@@ -148,8 +148,27 @@ The initial schema contains:
 
 You can extend this with:
 
-- `usage_snapshots` – traffic usage per service/period from CDN logs.
-- `invoices` – generated bills with storm-time discounts.
+- `usage_snapshots` – traffic usage per service/period from CDN logs (now part of the default schema).
+- `invoices` / `invoice_line_items` – generated bills that apply storm-time discounts.
+
+## Billing & invoicing flow
+
+The billing worker polls once a minute and executes a full invoicing run:
+
+1. Pull the newest unbilled `usage_snapshots` whose `window_end` falls within the configured billing period.
+2. For each snapshot/service, fetch overlapping `storm_events` and compute a coverage ratio that is capped by `storm_policies.max_coverage_factor`.
+3. Calculate line-item charges using the configured rate (cents/GB) and discount rate, apply the policy coverage factor, then insert invoice headers + `invoice_line_items` rows.
+4. Update each snapshot with the generated invoice ID so the worker never double bills and log every invoice ID for quick observability.
+
+Environment knobs (override via env vars) let you tune the worker without code changes:
+
+| Env var | Default | Description |
+| --- | --- | --- |
+| `BILLING_PERIOD` | `24h` | Look-back window for the RunOnce query and the period recorded on each invoice. |
+| `BILLING_RATE_CENTS_PER_GB` | `12` | Base rate applied to both primary + backup bytes within a snapshot. |
+| `BILLING_DISCOUNT_RATE` | `0.5` | Multiplier applied to backup usage when storms overlap the billing window (coverage factors can increase the effective discount up to the policy cap). |
+
+Usage ingestion is intentionally decoupled from billing – populate `usage_snapshots` from CDN logs or metering pipelines, then let the worker mint invoices in the same database transaction that tags the snapshots as billed.
 
 ## Notes
 

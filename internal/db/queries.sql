@@ -130,3 +130,56 @@ UPDATE storm_events
 SET ended_at = $2
 WHERE id = $1
 RETURNING id, service_id, kind, started_at, ended_at;
+
+-- name: GetUnbilledUsageSnapshots :many
+SELECT
+    us.id,
+    us.service_id,
+    s.customer_id,
+    us.window_start,
+    us.window_end,
+    us.primary_bytes,
+    us.backup_bytes
+FROM usage_snapshots us
+JOIN services s ON s.id = us.service_id
+WHERE us.invoice_id IS NULL
+  AND us.window_end <= sqlc.arg(window_end)
+  AND us.window_end > sqlc.arg(window_start)
+ORDER BY us.window_start;
+
+-- name: GetStormEventsForWindow :many
+SELECT id, service_id, kind, started_at, ended_at
+FROM storm_events
+WHERE service_id = sqlc.arg(service_id)
+  AND started_at < sqlc.arg(window_end)
+  AND (ended_at IS NULL OR ended_at > sqlc.arg(window_start))
+ORDER BY started_at;
+
+-- name: GetMaxCoverageFactorForService :one
+SELECT COALESCE(MAX(max_coverage_factor), 1.0)::double precision AS max_coverage_factor
+FROM storm_policies
+WHERE service_id = $1;
+
+-- name: InsertInvoice :one
+INSERT INTO invoices (customer_id, period_start, period_end, subtotal_cents, discount_cents, total_cents)
+VALUES ($1, $2, $3, $4, $5, $6)
+RETURNING id, customer_id, period_start, period_end, subtotal_cents, discount_cents, total_cents, created_at;
+
+-- name: InsertInvoiceLineItem :one
+INSERT INTO invoice_line_items (
+    invoice_id,
+    service_id,
+    window_start,
+    window_end,
+    primary_bytes,
+    backup_bytes,
+    coverage_factor,
+    amount_cents,
+    discount_cents
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+RETURNING id, invoice_id, service_id, window_start, window_end, primary_bytes, backup_bytes, coverage_factor, amount_cents, discount_cents, created_at;
+
+-- name: MarkUsageSnapshotInvoiced :exec
+UPDATE usage_snapshots
+SET invoice_id = $1
+WHERE id = $2;
