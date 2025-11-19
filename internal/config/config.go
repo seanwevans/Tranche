@@ -7,7 +7,6 @@ import (
 )
 
 type Config struct {
-	
 	PGDSN                 string
 	HTTPAddr              string
 	ProbePath             string
@@ -15,18 +14,18 @@ type Config struct {
 	BillingPeriod         time.Duration
 	BillingRateCentsPerGB int64
 	BillingDiscountRate   float64
- 	AWSRegion             string
+	AWSRegion             string
 	AWSAccessKey          string
 	AWSSecretKey          string
 	AWSSession            string
 }
 
 func Load() Config {
-	cfg := Config{	
-		AWSRegion:    os.Getenv("AWS_REGION"),
-		AWSAccessKey: os.Getenv("AWS_ACCESS_KEY_ID"),
-		AWSSecretKey: os.Getenv("AWS_SECRET_ACCESS_KEY"),
-		AWSSession:   os.Getenv("AWS_SESSION_TOKEN"),
+	cfg := Config{
+		AWSRegion:             os.Getenv("AWS_REGION"),
+		AWSAccessKey:          os.Getenv("AWS_ACCESS_KEY_ID"),
+		AWSSecretKey:          os.Getenv("AWS_SECRET_ACCESS_KEY"),
+		AWSSession:            os.Getenv("AWS_SESSION_TOKEN"),
 		PGDSN:                 getenv("PG_DSN", "postgres://user:pass@localhost:5432/tranche?sslmode=disable"),
 		HTTPAddr:              getenv("HTTP_ADDR", ":8080"),
 		ProbePath:             getenv("PROBE_PATH", "/healthz"),
