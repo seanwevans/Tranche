@@ -127,12 +127,31 @@ Right now they:
 
 ### 5. Wiring to real DNS/CDN (next steps)
 
-Replace the noop DNS provider with a real implementation, e.g. Route53:
+The DNS operator now ships with a Route53-backed provider. It is automatically
+enabled when AWS credentials are available; otherwise it falls back to the noop
+logger for local development.
 
-- Add credentials via environment / config.
-- Implement `SetWeights(domain, primary, backup)` to:
-  - Look up the hosted zone for the domain.
-  - Update weighted records for primary vs backup CNAMEs.
+Configure it via environment variables before starting `cmd/dns-operator`:
+
+```bash
+export AWS_REGION="us-east-1"
+export AWS_ACCESS_KEY_ID="..."
+export AWS_SECRET_ACCESS_KEY="..."
+# optional – for assumed roles / session tokens
+export AWS_SESSION_TOKEN="..."
+```
+
+For each service domain you manage, create two weighted records inside the
+matching hosted zone (e.g. `app.example.com`). The records should:
+
+- Share the same name and type (usually CNAME or A/AAAA).
+- Use `SetIdentifier` values of `primary` and `backup`.
+- Point at the primary/backup CDNs that Tranche is steering between.
+
+The operator reads desired weights from the database, looks up the relevant
+hosted zone, and issues UPSERTs for the two weighted records. Failures are
+logged and retried with exponential backoff so you can rely on them for future
+features such as per-domain weights or audit logging.
 
 Similarly, add a CDN integration layer under `internal/cdn/` when you’re ready.
 

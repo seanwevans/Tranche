@@ -23,7 +23,21 @@ func main() {
 	defer sqlDB.Close()
 
 	planner := routing.NewPlanner(queries)
-	dnsProv := dns.NewNoopProvider(logger) // replace with Route53/NS1 impl
+	var dnsProv dns.Provider = dns.NewNoopProvider(logger)
+	if cfg.AWSRegion != "" {
+		awsCfg := dns.Route53ProviderConfig{
+			Region:          cfg.AWSRegion,
+			AccessKeyID:     cfg.AWSAccessKey,
+			SecretAccessKey: cfg.AWSSecretKey,
+			SessionToken:    cfg.AWSSession,
+		}
+		prov, err := dns.NewRoute53Provider(ctx, logger, awsCfg)
+		if err != nil {
+			logger.Printf("failed to init Route53 provider, falling back to noop: %v", err)
+		} else {
+			dnsProv = prov
+		}
+	}
 
 	ticker := time.NewTicker(15 * time.Second)
 	defer ticker.Stop()
