@@ -64,7 +64,7 @@ func main() {
 					continue
 				}
 				for _, dom := range domains {
-					if err := dnsProv.SetWeights(dom.Name, weights.Primary, weights.Backup); err != nil {
+					if err := dnsProv.SetWeights(ctx, dom.Name, weights.Primary, weights.Backup); err != nil {
 						logger.Printf("SetWeights(%s): %v", dom.Name, err)
 					}
 				}
