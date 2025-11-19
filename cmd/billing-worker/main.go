@@ -21,7 +21,11 @@ func main() {
 	}
 	defer sqlDB.Close()
 
-	engine := billing.NewEngine(queries, logger)
+	engine := billing.NewEngine(queries, logger, billing.Config{
+		Period:         cfg.BillingPeriod,
+		RateCentsPerGB: cfg.BillingRateCentsPerGB,
+		DiscountRate:   cfg.BillingDiscountRate,
+	})
 
 	ticker := time.NewTicker(1 * time.Minute)
 	defer ticker.Stop()
