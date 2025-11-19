@@ -2,6 +2,9 @@ package main
 
 import (
 	"context"
+	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"tranche/internal/config"
@@ -12,7 +15,8 @@ import (
 )
 
 func main() {
-	ctx := context.Background()
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
 	cfg := config.Load()
 	logger := logging.New()
 
@@ -20,7 +24,6 @@ func main() {
 	if err != nil {
 		logger.Fatalf("opening db: %v", err)
 	}
-	defer sqlDB.Close()
 
 	metrics := monitor.NewInMemoryMetrics()
 	mv := monitor.NewMetricsView(metrics)
@@ -34,11 +37,14 @@ func main() {
 	go probeSched.Run(ctx)
 
 	ticker := time.NewTicker(10 * time.Second)
-	defer ticker.Stop()
 
 	for {
 		select {
 		case <-ctx.Done():
+			ticker.Stop()
+			if err := sqlDB.Close(); err != nil {
+				logger.Printf("closing db: %v", err)
+			}
 			return
 		case <-ticker.C:
 			if err := stormEng.Tick(ctx); err != nil {
