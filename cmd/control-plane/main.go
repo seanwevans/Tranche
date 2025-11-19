@@ -30,8 +30,12 @@ func main() {
 	api := httpapi.NewServer(logger, queries)
 
 	srv := &http.Server{
-		Addr:    cfg.HTTPAddr,
-		Handler: api.Router(),
+		Addr:              cfg.HTTPAddr,
+		Handler:           api.Router(),
+		ReadTimeout:       5 * time.Second,
+		ReadHeaderTimeout: 5 * time.Second,
+		WriteTimeout:      60 * time.Second,
+		IdleTimeout:       60 * time.Second,
 	}
 
 	go func() {
