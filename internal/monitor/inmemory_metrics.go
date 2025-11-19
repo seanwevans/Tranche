@@ -11,13 +11,22 @@ type probeSample struct {
 }
 
 type InMemoryMetrics struct {
-	mu      sync.Mutex
-	samples map[int64]map[string][]probeSample
+	mu                sync.Mutex
+	samples           map[int64]map[string][]probeSample
+	emptyAvailability float64
 }
 
 func NewInMemoryMetrics() *InMemoryMetrics {
 	return &InMemoryMetrics{
-		samples: make(map[int64]map[string][]probeSample),
+		samples:           make(map[int64]map[string][]probeSample),
+		emptyAvailability: 0,
+	}
+}
+
+func NewInMemoryMetricsWithDefault(emptyAvailability float64) *InMemoryMetrics {
+	return &InMemoryMetrics{
+		samples:           make(map[int64]map[string][]probeSample),
+		emptyAvailability: emptyAvailability,
 	}
 }
 
@@ -40,7 +49,7 @@ func (m *InMemoryMetrics) Availability(serviceID int64, window time.Duration) fl
 
 	targets := m.samples[serviceID]
 	if len(targets) == 0 {
-		return 1.0
+		return m.emptyAvailability
 	}
 
 	total := 0
@@ -72,10 +81,10 @@ func (m *InMemoryMetrics) Availability(serviceID int64, window time.Duration) fl
 	}
 	if len(targets) == 0 {
 		delete(m.samples, serviceID)
-		return 1.0
+		return m.emptyAvailability
 	}
 	if total == 0 {
-		return 1.0
+		return m.emptyAvailability
 	}
 	return float64(okCount) / float64(total)
 }
