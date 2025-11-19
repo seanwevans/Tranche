@@ -305,6 +305,8 @@ func (q *Queries) GetServiceForCustomer(ctx context.Context, arg GetServiceForCu
 		&i.DeletedAt,
 	)
 	return i, err
+}
+
 const getStormEventsForWindow = `-- name: GetStormEventsForWindow :many
 SELECT id, service_id, kind, started_at, ended_at
 FROM storm_events
@@ -416,35 +418,6 @@ func (q *Queries) GetStormPolicyForService(ctx context.Context, arg GetStormPoli
 	return i, err
 }
 
-const insertService = `-- name: InsertService :one
-INSERT INTO services (customer_id, name, primary_cdn, backup_cdn)
-VALUES ($1, $2, $3, $4)
-RETURNING id, customer_id, name, primary_cdn, backup_cdn, created_at, deleted_at
-`
-
-type InsertServiceParams struct {
-	CustomerID int64  `json:"customer_id"`
-	Name       string `json:"name"`
-	PrimaryCdn string `json:"primary_cdn"`
-	BackupCdn  string `json:"backup_cdn"`
-}
-
-func (q *Queries) InsertService(ctx context.Context, arg InsertServiceParams) (Service, error) {
-	row := q.db.QueryRowContext(ctx, insertService,
-		arg.CustomerID,
-		arg.Name,
-		arg.PrimaryCdn,
-		arg.BackupCdn,
-	)
-	var i Service
-	err := row.Scan(
-		&i.ID,
-		&i.CustomerID,
-		&i.Name,
-		&i.PrimaryCdn,
-		&i.BackupCdn,
-		&i.CreatedAt,
-		&i.DeletedAt,
 const getUnbilledUsageSnapshots = `-- name: GetUnbilledUsageSnapshots :many
 SELECT
     us.id,
@@ -546,24 +519,6 @@ func (q *Queries) InsertInvoice(ctx context.Context, arg InsertInvoiceParams) (I
 	return i, err
 }
 
-const insertServiceDomain = `-- name: InsertServiceDomain :one
-INSERT INTO service_domains (service_id, name)
-VALUES ($1, $2)
-RETURNING id, service_id, name, created_at
-`
-
-type InsertServiceDomainParams struct {
-	ServiceID int64  `json:"service_id"`
-	Name      string `json:"name"`
-}
-
-func (q *Queries) InsertServiceDomain(ctx context.Context, arg InsertServiceDomainParams) (ServiceDomain, error) {
-	row := q.db.QueryRowContext(ctx, insertServiceDomain, arg.ServiceID, arg.Name)
-	var i ServiceDomain
-	err := row.Scan(
-		&i.ID,
-		&i.ServiceID,
-		&i.Name,
 const insertInvoiceLineItem = `-- name: InsertInvoiceLineItem :one
 INSERT INTO invoice_line_items (
     invoice_id,
@@ -615,6 +570,62 @@ func (q *Queries) InsertInvoiceLineItem(ctx context.Context, arg InsertInvoiceLi
 		&i.CoverageFactor,
 		&i.AmountCents,
 		&i.DiscountCents,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const insertService = `-- name: InsertService :one
+INSERT INTO services (customer_id, name, primary_cdn, backup_cdn)
+VALUES ($1, $2, $3, $4)
+RETURNING id, customer_id, name, primary_cdn, backup_cdn, created_at, deleted_at
+`
+
+type InsertServiceParams struct {
+	CustomerID int64  `json:"customer_id"`
+	Name       string `json:"name"`
+	PrimaryCdn string `json:"primary_cdn"`
+	BackupCdn  string `json:"backup_cdn"`
+}
+
+func (q *Queries) InsertService(ctx context.Context, arg InsertServiceParams) (Service, error) {
+	row := q.db.QueryRowContext(ctx, insertService,
+		arg.CustomerID,
+		arg.Name,
+		arg.PrimaryCdn,
+		arg.BackupCdn,
+	)
+	var i Service
+	err := row.Scan(
+		&i.ID,
+		&i.CustomerID,
+		&i.Name,
+		&i.PrimaryCdn,
+		&i.BackupCdn,
+		&i.CreatedAt,
+		&i.DeletedAt,
+	)
+	return i, err
+}
+
+const insertServiceDomain = `-- name: InsertServiceDomain :one
+INSERT INTO service_domains (service_id, name)
+VALUES ($1, $2)
+RETURNING id, service_id, name, created_at
+`
+
+type InsertServiceDomainParams struct {
+	ServiceID int64  `json:"service_id"`
+	Name      string `json:"name"`
+}
+
+func (q *Queries) InsertServiceDomain(ctx context.Context, arg InsertServiceDomainParams) (ServiceDomain, error) {
+	row := q.db.QueryRowContext(ctx, insertServiceDomain, arg.ServiceID, arg.Name)
+	var i ServiceDomain
+	err := row.Scan(
+		&i.ID,
+		&i.ServiceID,
+		&i.Name,
 		&i.CreatedAt,
 	)
 	return i, err
@@ -711,6 +722,22 @@ func (q *Queries) MarkStormEventResolved(ctx context.Context, arg MarkStormEvent
 		&i.EndedAt,
 	)
 	return i, err
+}
+
+const markUsageSnapshotInvoiced = `-- name: MarkUsageSnapshotInvoiced :exec
+UPDATE usage_snapshots
+SET invoice_id = $1
+WHERE id = $2
+`
+
+type MarkUsageSnapshotInvoicedParams struct {
+	InvoiceID sql.NullInt64 `json:"invoice_id"`
+	ID        int64         `json:"id"`
+}
+
+func (q *Queries) MarkUsageSnapshotInvoiced(ctx context.Context, arg MarkUsageSnapshotInvoicedParams) error {
+	_, err := q.db.ExecContext(ctx, markUsageSnapshotInvoiced, arg.InvoiceID, arg.ID)
+	return err
 }
 
 const softDeleteService = `-- name: SoftDeleteService :one
@@ -825,18 +852,4 @@ func (q *Queries) UpdateStormPolicy(ctx context.Context, arg UpdateStormPolicyPa
 		&i.CreatedAt,
 	)
 	return i, err
-const markUsageSnapshotInvoiced = `-- name: MarkUsageSnapshotInvoiced :exec
-UPDATE usage_snapshots
-SET invoice_id = $1
-WHERE id = $2
-`
-
-type MarkUsageSnapshotInvoicedParams struct {
-	InvoiceID sql.NullInt64 `json:"invoice_id"`
-	ID        int64         `json:"id"`
-}
-
-func (q *Queries) MarkUsageSnapshotInvoiced(ctx context.Context, arg MarkUsageSnapshotInvoicedParams) error {
-	_, err := q.db.ExecContext(ctx, markUsageSnapshotInvoiced, arg.InvoiceID, arg.ID)
-	return err
 }
