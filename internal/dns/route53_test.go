@@ -83,7 +83,7 @@ func TestRoute53ProviderSetWeights(t *testing.T) {
 
 	provider := newRoute53Provider(discardLogger(), mock, Route53ProviderConfig{MaxAttempts: 1})
 
-	if err := provider.SetWeights("app.example.com", 50, 10); err != nil {
+	if err := provider.SetWeights(context.Background(), "app.example.com", 50, 10); err != nil {
 		t.Fatalf("SetWeights returned error: %v", err)
 	}
 
@@ -126,12 +126,47 @@ func TestRoute53ProviderRetriesFailures(t *testing.T) {
 	provider := newRoute53Provider(discardLogger(), mock, Route53ProviderConfig{MaxAttempts: 2})
 	provider.sleepFn = func(d time.Duration) {}
 
-	if err := provider.SetWeights("app.example.com", 10, 5); err != nil {
+	if err := provider.SetWeights(context.Background(), "app.example.com", 10, 5); err != nil {
 		t.Fatalf("expected success after retry, got %v", err)
 	}
 
 	if attempts != 2 {
 		t.Fatalf("expected 2 attempts, got %d", attempts)
+	}
+}
+
+func TestRoute53ProviderContextCancellationStopsRetries(t *testing.T) {
+	mock := &mockRoute53Client{}
+	mock.listZonesFn = func(ctx context.Context, params *route53.ListHostedZonesByNameInput, optFns ...func(*route53.Options)) (*route53.ListHostedZonesByNameOutput, error) {
+		return &route53.ListHostedZonesByNameOutput{
+			HostedZones: []route53types.HostedZone{{Name: aws.String("example.com."), Id: aws.String("/hostedzone/Z123")}},
+		}, nil
+	}
+
+	primary := route53types.ResourceRecordSet{Name: aws.String("app.example.com."), SetIdentifier: aws.String("primary"), Weight: aws.Int64(1)}
+	backup := route53types.ResourceRecordSet{Name: aws.String("app.example.com."), SetIdentifier: aws.String("backup"), Weight: aws.Int64(1)}
+	mock.listRecordsFn = func(ctx context.Context, params *route53.ListResourceRecordSetsInput, optFns ...func(*route53.Options)) (*route53.ListResourceRecordSetsOutput, error) {
+		return &route53.ListResourceRecordSetsOutput{ResourceRecordSets: []route53types.ResourceRecordSet{primary, backup}}, nil
+	}
+
+	attempts := 0
+	ctx, cancel := context.WithCancel(context.Background())
+	mock.changeRecordFn = func(ctx context.Context, params *route53.ChangeResourceRecordSetsInput, optFns ...func(*route53.Options)) (*route53.ChangeResourceRecordSetsOutput, error) {
+		attempts++
+		cancel()
+		return nil, errors.New("temporary error")
+	}
+
+	provider := newRoute53Provider(discardLogger(), mock, Route53ProviderConfig{MaxAttempts: 3})
+	provider.sleepFn = time.Sleep
+
+	err := provider.SetWeights(ctx, "app.example.com", 10, 5)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected context cancellation error, got %v", err)
+	}
+
+	if attempts != 1 {
+		t.Fatalf("expected cancellation after first attempt, got %d attempts", attempts)
 	}
 }
 
@@ -158,7 +193,7 @@ func TestRoute53ProviderNormalizesDomainCase(t *testing.T) {
 	}
 
 	provider := newRoute53Provider(discardLogger(), mock, Route53ProviderConfig{MaxAttempts: 1})
-	if err := provider.SetWeights("App.Example.COM", 15, 25); err != nil {
+	if err := provider.SetWeights(context.Background(), "App.Example.COM", 15, 25); err != nil {
 		t.Fatalf("SetWeights returned error: %v", err)
 	}
 

@@ -76,7 +76,7 @@ func newRoute53Provider(log Logger, client route53API, cfg Route53ProviderConfig
 }
 
 // SetWeights updates the weighted DNS entries for a domain.
-func (p *Route53Provider) SetWeights(domain string, primaryWeight, backupWeight int) error {
+func (p *Route53Provider) SetWeights(ctx context.Context, domain string, primaryWeight, backupWeight int) error {
 	if strings.TrimSpace(domain) == "" {
 		return errors.New("domain is required")
 	}
@@ -84,19 +84,38 @@ func (p *Route53Provider) SetWeights(domain string, primaryWeight, backupWeight 
 	normalizedDomain := strings.ToLower(strings.TrimSuffix(domain, "."))
 	var lastErr error
 	for attempt := 1; attempt <= p.maxAttempts; attempt++ {
-		ctx := context.Background()
+		if err := ctx.Err(); err != nil {
+			return fmt.Errorf("route53 SetWeights(%s): %w", normalizedDomain, err)
+		}
 		if err := p.setWeightsOnce(ctx, normalizedDomain, primaryWeight, backupWeight); err != nil {
 			lastErr = err
 			p.log.Printf("route53 SetWeights attempt %d/%d for %s failed: %v", attempt, p.maxAttempts, normalizedDomain, err)
 			if attempt < p.maxAttempts {
 				backoff := time.Duration(1<<uint(attempt-1)) * 200 * time.Millisecond
-				p.sleepFn(backoff)
+				if err := p.sleepWithContext(ctx, backoff); err != nil {
+					return fmt.Errorf("route53 SetWeights(%s): %w", normalizedDomain, err)
+				}
 			}
 			continue
 		}
 		return nil
 	}
 	return fmt.Errorf("route53 SetWeights(%s) failed: %w", normalizedDomain, lastErr)
+}
+
+func (p *Route53Provider) sleepWithContext(ctx context.Context, d time.Duration) error {
+	done := make(chan struct{})
+	go func() {
+		p.sleepFn(d)
+		close(done)
+	}()
+
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-done:
+		return nil
+	}
 }
 
 func (p *Route53Provider) setWeightsOnce(ctx context.Context, domain string, primaryWeight, backupWeight int) error {

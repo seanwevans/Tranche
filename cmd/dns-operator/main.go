@@ -78,7 +78,28 @@ func main() {
 			_ = sqlDB.Close()
 			return
 		case <-ticker.C:
-			reconcile()
+			services, err := queries.GetActiveServices(ctx)
+			if err != nil {
+				logger.Printf("GetActiveServices: %v", err)
+				continue
+			}
+			for _, s := range services {
+				weights, err := planner.DesiredRouting(ctx, s.ID)
+				if err != nil {
+					logger.Printf("DesiredRouting(service=%d): %v", s.ID, err)
+					continue
+				}
+				domains, err := queries.GetServiceDomains(ctx, s.ID)
+				if err != nil {
+					logger.Printf("GetServiceDomains(service=%d): %v", s.ID, err)
+					continue
+				}
+				for _, dom := range domains {
+					if err := dnsProv.SetWeights(ctx, dom.Name, weights.Primary, weights.Backup); err != nil {
+						logger.Printf("SetWeights(%s): %v", dom.Name, err)
+					}
+				}
+			}
 		}
 	}
 }
