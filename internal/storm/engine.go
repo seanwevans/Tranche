@@ -45,7 +45,8 @@ func (e *Engine) Tick(ctx context.Context) error {
 	for _, s := range services {
 		policies, err := e.db.GetStormPoliciesForService(ctx, s.ID)
 		if err != nil {
-			return err
+			e.log.Printf("GetStormPoliciesForService(service=%d): %v", s.ID, err)
+			continue
 		}
 		for _, p := range policies {
 			if err := e.evaluatePolicy(ctx, s.ID, p); err != nil {
