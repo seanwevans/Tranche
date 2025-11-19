@@ -134,3 +134,41 @@ func TestRoute53ProviderRetriesFailures(t *testing.T) {
 		t.Fatalf("expected 2 attempts, got %d", attempts)
 	}
 }
+
+func TestRoute53ProviderNormalizesDomainCase(t *testing.T) {
+	mock := &mockRoute53Client{}
+	mock.listZonesFn = func(ctx context.Context, params *route53.ListHostedZonesByNameInput, optFns ...func(*route53.Options)) (*route53.ListHostedZonesByNameOutput, error) {
+		return &route53.ListHostedZonesByNameOutput{
+			HostedZones: []route53types.HostedZone{
+				{Name: aws.String("Example.COM."), Id: aws.String("/hostedzone/Z456")},
+			},
+		}, nil
+	}
+
+	primary := route53types.ResourceRecordSet{Name: aws.String("app.example.com."), SetIdentifier: aws.String("PRIMARY"), Weight: aws.Int64(5)}
+	backup := route53types.ResourceRecordSet{Name: aws.String("app.example.com."), SetIdentifier: aws.String("BACKUP"), Weight: aws.Int64(5)}
+	mock.listRecordsFn = func(ctx context.Context, params *route53.ListResourceRecordSetsInput, optFns ...func(*route53.Options)) (*route53.ListResourceRecordSetsOutput, error) {
+		return &route53.ListResourceRecordSetsOutput{ResourceRecordSets: []route53types.ResourceRecordSet{primary, backup}}, nil
+	}
+
+	var captured *route53.ChangeResourceRecordSetsInput
+	mock.changeRecordFn = func(ctx context.Context, params *route53.ChangeResourceRecordSetsInput, optFns ...func(*route53.Options)) (*route53.ChangeResourceRecordSetsOutput, error) {
+		captured = params
+		return &route53.ChangeResourceRecordSetsOutput{}, nil
+	}
+
+	provider := newRoute53Provider(discardLogger(), mock, Route53ProviderConfig{MaxAttempts: 1})
+	if err := provider.SetWeights("App.Example.COM", 15, 25); err != nil {
+		t.Fatalf("SetWeights returned error: %v", err)
+	}
+
+	if captured == nil {
+		t.Fatalf("expected change request to be sent")
+	}
+	if got := aws.ToInt64(captured.ChangeBatch.Changes[0].ResourceRecordSet.Weight); got != 15 {
+		t.Fatalf("expected primary weight 15, got %d", got)
+	}
+	if got := aws.ToInt64(captured.ChangeBatch.Changes[1].ResourceRecordSet.Weight); got != 25 {
+		t.Fatalf("expected backup weight 25, got %d", got)
+	}
+}
