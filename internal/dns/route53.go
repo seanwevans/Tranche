@@ -81,7 +81,7 @@ func (p *Route53Provider) SetWeights(domain string, primaryWeight, backupWeight 
 		return errors.New("domain is required")
 	}
 
-	normalizedDomain := strings.TrimSuffix(domain, ".")
+	normalizedDomain := strings.ToLower(strings.TrimSuffix(domain, "."))
 	var lastErr error
 	for attempt := 1; attempt <= p.maxAttempts; attempt++ {
 		ctx := context.Background()
@@ -133,6 +133,7 @@ func (p *Route53Provider) setWeightsOnce(ctx context.Context, domain string, pri
 }
 
 func (p *Route53Provider) lookupHostedZone(ctx context.Context, domain string) (string, error) {
+	domain = strings.ToLower(domain)
 	p.cacheMu.RLock()
 	if id, ok := p.zoneCache[domain]; ok {
 		p.cacheMu.RUnlock()
@@ -150,7 +151,7 @@ func (p *Route53Provider) lookupHostedZone(ctx context.Context, domain string) (
 		bestName string
 	)
 	for _, zone := range resp.HostedZones {
-		zoneName := strings.TrimSuffix(aws.ToString(zone.Name), ".")
+		zoneName := strings.ToLower(strings.TrimSuffix(aws.ToString(zone.Name), "."))
 		if zoneName == "" {
 			continue
 		}
@@ -175,6 +176,7 @@ func (p *Route53Provider) lookupHostedZone(ctx context.Context, domain string) (
 }
 
 func (p *Route53Provider) fetchWeightedRecords(ctx context.Context, zoneID, domain string) (*route53types.ResourceRecordSet, *route53types.ResourceRecordSet, error) {
+	domain = strings.ToLower(domain)
 	input := &route53.ListResourceRecordSetsInput{
 		HostedZoneId:    aws.String(zoneID),
 		StartRecordName: aws.String(domain),
@@ -189,7 +191,7 @@ func (p *Route53Provider) fetchWeightedRecords(ctx context.Context, zoneID, doma
 
 		for i := range resp.ResourceRecordSets {
 			rr := resp.ResourceRecordSets[i]
-			name := strings.TrimSuffix(aws.ToString(rr.Name), ".")
+			name := strings.ToLower(strings.TrimSuffix(aws.ToString(rr.Name), "."))
 			if name != domain {
 				continue
 			}
