@@ -84,7 +84,8 @@ func (p *Route53Provider) SetWeights(domain string, primaryWeight, backupWeight 
 	normalizedDomain := strings.TrimSuffix(domain, ".")
 	var lastErr error
 	for attempt := 1; attempt <= p.maxAttempts; attempt++ {
-		if err := p.setWeightsOnce(normalizedDomain, primaryWeight, backupWeight); err != nil {
+		ctx := context.Background()
+		if err := p.setWeightsOnce(ctx, normalizedDomain, primaryWeight, backupWeight); err != nil {
 			lastErr = err
 			p.log.Printf("route53 SetWeights attempt %d/%d for %s failed: %v", attempt, p.maxAttempts, normalizedDomain, err)
 			if attempt < p.maxAttempts {
@@ -98,8 +99,7 @@ func (p *Route53Provider) SetWeights(domain string, primaryWeight, backupWeight 
 	return fmt.Errorf("route53 SetWeights(%s) failed: %w", normalizedDomain, lastErr)
 }
 
-func (p *Route53Provider) setWeightsOnce(domain string, primaryWeight, backupWeight int) error {
-	ctx := context.Background()
+func (p *Route53Provider) setWeightsOnce(ctx context.Context, domain string, primaryWeight, backupWeight int) error {
 	zoneID, err := p.lookupHostedZone(ctx, domain)
 	if err != nil {
 		return err
