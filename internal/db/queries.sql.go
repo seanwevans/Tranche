@@ -11,6 +11,58 @@ import (
 	"time"
 )
 
+const deleteServiceDomain = `-- name: DeleteServiceDomain :one
+DELETE FROM service_domains
+WHERE id = $1
+  AND service_id = $2
+RETURNING id, service_id, name, created_at
+`
+
+type DeleteServiceDomainParams struct {
+	ID        int64 `json:"id"`
+	ServiceID int64 `json:"service_id"`
+}
+
+func (q *Queries) DeleteServiceDomain(ctx context.Context, arg DeleteServiceDomainParams) (ServiceDomain, error) {
+	row := q.db.QueryRowContext(ctx, deleteServiceDomain, arg.ID, arg.ServiceID)
+	var i ServiceDomain
+	err := row.Scan(
+		&i.ID,
+		&i.ServiceID,
+		&i.Name,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const deleteStormPolicy = `-- name: DeleteStormPolicy :one
+DELETE FROM storm_policies
+WHERE id = $1
+  AND service_id = $2
+RETURNING id, service_id, kind, threshold_avail, window_seconds, cooldown_seconds, max_coverage_factor, created_at
+`
+
+type DeleteStormPolicyParams struct {
+	ID        int64 `json:"id"`
+	ServiceID int64 `json:"service_id"`
+}
+
+func (q *Queries) DeleteStormPolicy(ctx context.Context, arg DeleteStormPolicyParams) (StormPolicy, error) {
+	row := q.db.QueryRowContext(ctx, deleteStormPolicy, arg.ID, arg.ServiceID)
+	var i StormPolicy
+	err := row.Scan(
+		&i.ID,
+		&i.ServiceID,
+		&i.Kind,
+		&i.ThresholdAvail,
+		&i.WindowSeconds,
+		&i.CooldownSeconds,
+		&i.MaxCoverageFactor,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const getActiveServices = `-- name: GetActiveServices :many
 SELECT id, customer_id, name, primary_cdn, backup_cdn, created_at, deleted_at
 FROM services
@@ -20,6 +72,45 @@ ORDER BY id
 
 func (q *Queries) GetActiveServices(ctx context.Context) ([]Service, error) {
 	rows, err := q.db.QueryContext(ctx, getActiveServices)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Service{}
+	for rows.Next() {
+		var i Service
+		if err := rows.Scan(
+			&i.ID,
+			&i.CustomerID,
+			&i.Name,
+			&i.PrimaryCdn,
+			&i.BackupCdn,
+			&i.CreatedAt,
+			&i.DeletedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getActiveServicesForCustomer = `-- name: GetActiveServicesForCustomer :many
+SELECT id, customer_id, name, primary_cdn, backup_cdn, created_at, deleted_at
+FROM services
+WHERE deleted_at IS NULL
+  AND customer_id = $1
+ORDER BY id
+`
+
+func (q *Queries) GetActiveServicesForCustomer(ctx context.Context, customerID int64) ([]Service, error) {
+	rows, err := q.db.QueryContext(ctx, getActiveServicesForCustomer, customerID)
 	if err != nil {
 		return nil, err
 	}
@@ -188,6 +279,32 @@ func (q *Queries) GetServiceDomains(ctx context.Context, serviceID int64) ([]Ser
 	return items, nil
 }
 
+const getServiceForCustomer = `-- name: GetServiceForCustomer :one
+SELECT id, customer_id, name, primary_cdn, backup_cdn, created_at, deleted_at
+FROM services
+WHERE id = $1
+  AND customer_id = $2
+  AND deleted_at IS NULL
+`
+
+type GetServiceForCustomerParams struct {
+	ID         int64 `json:"id"`
+	CustomerID int64 `json:"customer_id"`
+}
+
+func (q *Queries) GetServiceForCustomer(ctx context.Context, arg GetServiceForCustomerParams) (Service, error) {
+	row := q.db.QueryRowContext(ctx, getServiceForCustomer, arg.ID, arg.CustomerID)
+	var i Service
+	err := row.Scan(
+		&i.ID,
+		&i.CustomerID,
+		&i.Name,
+		&i.PrimaryCdn,
+		&i.BackupCdn,
+		&i.CreatedAt,
+		&i.DeletedAt,
+	)
+	return i, err
 const getStormEventsForWindow = `-- name: GetStormEventsForWindow :many
 SELECT id, service_id, kind, started_at, ended_at
 FROM storm_events
@@ -271,6 +388,63 @@ func (q *Queries) GetStormPoliciesForService(ctx context.Context, serviceID int6
 	return items, nil
 }
 
+const getStormPolicyForService = `-- name: GetStormPolicyForService :one
+SELECT id, service_id, kind, threshold_avail, window_seconds, cooldown_seconds, max_coverage_factor, created_at
+FROM storm_policies
+WHERE id = $1
+  AND service_id = $2
+`
+
+type GetStormPolicyForServiceParams struct {
+	ID        int64 `json:"id"`
+	ServiceID int64 `json:"service_id"`
+}
+
+func (q *Queries) GetStormPolicyForService(ctx context.Context, arg GetStormPolicyForServiceParams) (StormPolicy, error) {
+	row := q.db.QueryRowContext(ctx, getStormPolicyForService, arg.ID, arg.ServiceID)
+	var i StormPolicy
+	err := row.Scan(
+		&i.ID,
+		&i.ServiceID,
+		&i.Kind,
+		&i.ThresholdAvail,
+		&i.WindowSeconds,
+		&i.CooldownSeconds,
+		&i.MaxCoverageFactor,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const insertService = `-- name: InsertService :one
+INSERT INTO services (customer_id, name, primary_cdn, backup_cdn)
+VALUES ($1, $2, $3, $4)
+RETURNING id, customer_id, name, primary_cdn, backup_cdn, created_at, deleted_at
+`
+
+type InsertServiceParams struct {
+	CustomerID int64  `json:"customer_id"`
+	Name       string `json:"name"`
+	PrimaryCdn string `json:"primary_cdn"`
+	BackupCdn  string `json:"backup_cdn"`
+}
+
+func (q *Queries) InsertService(ctx context.Context, arg InsertServiceParams) (Service, error) {
+	row := q.db.QueryRowContext(ctx, insertService,
+		arg.CustomerID,
+		arg.Name,
+		arg.PrimaryCdn,
+		arg.BackupCdn,
+	)
+	var i Service
+	err := row.Scan(
+		&i.ID,
+		&i.CustomerID,
+		&i.Name,
+		&i.PrimaryCdn,
+		&i.BackupCdn,
+		&i.CreatedAt,
+		&i.DeletedAt,
 const getUnbilledUsageSnapshots = `-- name: GetUnbilledUsageSnapshots :many
 SELECT
     us.id,
@@ -372,6 +546,24 @@ func (q *Queries) InsertInvoice(ctx context.Context, arg InsertInvoiceParams) (I
 	return i, err
 }
 
+const insertServiceDomain = `-- name: InsertServiceDomain :one
+INSERT INTO service_domains (service_id, name)
+VALUES ($1, $2)
+RETURNING id, service_id, name, created_at
+`
+
+type InsertServiceDomainParams struct {
+	ServiceID int64  `json:"service_id"`
+	Name      string `json:"name"`
+}
+
+func (q *Queries) InsertServiceDomain(ctx context.Context, arg InsertServiceDomainParams) (ServiceDomain, error) {
+	row := q.db.QueryRowContext(ctx, insertServiceDomain, arg.ServiceID, arg.Name)
+	var i ServiceDomain
+	err := row.Scan(
+		&i.ID,
+		&i.ServiceID,
+		&i.Name,
 const insertInvoiceLineItem = `-- name: InsertInvoiceLineItem :one
 INSERT INTO invoice_line_items (
     invoice_id,
@@ -452,6 +644,50 @@ func (q *Queries) InsertStormEvent(ctx context.Context, arg InsertStormEventPara
 	return i, err
 }
 
+const insertStormPolicy = `-- name: InsertStormPolicy :one
+INSERT INTO storm_policies (
+        service_id,
+        kind,
+        threshold_avail,
+        window_seconds,
+        cooldown_seconds,
+        max_coverage_factor)
+VALUES ($1, $2, $3, $4, $5, $6)
+RETURNING id, service_id, kind, threshold_avail, window_seconds, cooldown_seconds, max_coverage_factor, created_at
+`
+
+type InsertStormPolicyParams struct {
+	ServiceID         int64   `json:"service_id"`
+	Kind              string  `json:"kind"`
+	ThresholdAvail    float64 `json:"threshold_avail"`
+	WindowSeconds     int32   `json:"window_seconds"`
+	CooldownSeconds   int32   `json:"cooldown_seconds"`
+	MaxCoverageFactor float64 `json:"max_coverage_factor"`
+}
+
+func (q *Queries) InsertStormPolicy(ctx context.Context, arg InsertStormPolicyParams) (StormPolicy, error) {
+	row := q.db.QueryRowContext(ctx, insertStormPolicy,
+		arg.ServiceID,
+		arg.Kind,
+		arg.ThresholdAvail,
+		arg.WindowSeconds,
+		arg.CooldownSeconds,
+		arg.MaxCoverageFactor,
+	)
+	var i StormPolicy
+	err := row.Scan(
+		&i.ID,
+		&i.ServiceID,
+		&i.Kind,
+		&i.ThresholdAvail,
+		&i.WindowSeconds,
+		&i.CooldownSeconds,
+		&i.MaxCoverageFactor,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const markStormEventResolved = `-- name: MarkStormEventResolved :one
 UPDATE storm_events
 SET ended_at = $2
@@ -477,6 +713,118 @@ func (q *Queries) MarkStormEventResolved(ctx context.Context, arg MarkStormEvent
 	return i, err
 }
 
+const softDeleteService = `-- name: SoftDeleteService :one
+UPDATE services
+SET deleted_at = NOW()
+WHERE id = $1
+  AND customer_id = $2
+  AND deleted_at IS NULL
+RETURNING id, customer_id, name, primary_cdn, backup_cdn, created_at, deleted_at
+`
+
+type SoftDeleteServiceParams struct {
+	ID         int64 `json:"id"`
+	CustomerID int64 `json:"customer_id"`
+}
+
+func (q *Queries) SoftDeleteService(ctx context.Context, arg SoftDeleteServiceParams) (Service, error) {
+	row := q.db.QueryRowContext(ctx, softDeleteService, arg.ID, arg.CustomerID)
+	var i Service
+	err := row.Scan(
+		&i.ID,
+		&i.CustomerID,
+		&i.Name,
+		&i.PrimaryCdn,
+		&i.BackupCdn,
+		&i.CreatedAt,
+		&i.DeletedAt,
+	)
+	return i, err
+}
+
+const updateService = `-- name: UpdateService :one
+UPDATE services
+SET name = $3,
+    primary_cdn = $4,
+    backup_cdn = $5
+WHERE id = $1
+  AND customer_id = $2
+RETURNING id, customer_id, name, primary_cdn, backup_cdn, created_at, deleted_at
+`
+
+type UpdateServiceParams struct {
+	ID         int64  `json:"id"`
+	CustomerID int64  `json:"customer_id"`
+	Name       string `json:"name"`
+	PrimaryCdn string `json:"primary_cdn"`
+	BackupCdn  string `json:"backup_cdn"`
+}
+
+func (q *Queries) UpdateService(ctx context.Context, arg UpdateServiceParams) (Service, error) {
+	row := q.db.QueryRowContext(ctx, updateService,
+		arg.ID,
+		arg.CustomerID,
+		arg.Name,
+		arg.PrimaryCdn,
+		arg.BackupCdn,
+	)
+	var i Service
+	err := row.Scan(
+		&i.ID,
+		&i.CustomerID,
+		&i.Name,
+		&i.PrimaryCdn,
+		&i.BackupCdn,
+		&i.CreatedAt,
+		&i.DeletedAt,
+	)
+	return i, err
+}
+
+const updateStormPolicy = `-- name: UpdateStormPolicy :one
+UPDATE storm_policies
+SET kind = $3,
+    threshold_avail = $4,
+    window_seconds = $5,
+    cooldown_seconds = $6,
+    max_coverage_factor = $7
+WHERE id = $1
+  AND service_id = $2
+RETURNING id, service_id, kind, threshold_avail, window_seconds, cooldown_seconds, max_coverage_factor, created_at
+`
+
+type UpdateStormPolicyParams struct {
+	ID                int64   `json:"id"`
+	ServiceID         int64   `json:"service_id"`
+	Kind              string  `json:"kind"`
+	ThresholdAvail    float64 `json:"threshold_avail"`
+	WindowSeconds     int32   `json:"window_seconds"`
+	CooldownSeconds   int32   `json:"cooldown_seconds"`
+	MaxCoverageFactor float64 `json:"max_coverage_factor"`
+}
+
+func (q *Queries) UpdateStormPolicy(ctx context.Context, arg UpdateStormPolicyParams) (StormPolicy, error) {
+	row := q.db.QueryRowContext(ctx, updateStormPolicy,
+		arg.ID,
+		arg.ServiceID,
+		arg.Kind,
+		arg.ThresholdAvail,
+		arg.WindowSeconds,
+		arg.CooldownSeconds,
+		arg.MaxCoverageFactor,
+	)
+	var i StormPolicy
+	err := row.Scan(
+		&i.ID,
+		&i.ServiceID,
+		&i.Kind,
+		&i.ThresholdAvail,
+		&i.WindowSeconds,
+		&i.CooldownSeconds,
+		&i.MaxCoverageFactor,
+		&i.CreatedAt,
+	)
+	return i, err
 const markUsageSnapshotInvoiced = `-- name: MarkUsageSnapshotInvoiced :exec
 UPDATE usage_snapshots
 SET invoice_id = $1
