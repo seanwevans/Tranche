@@ -115,11 +115,19 @@ func (e *Engine) RunOnce(ctx context.Context, now time.Time) error {
 		})
 	}
 
+	qtx, tx, err := e.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin invoice transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	logs := make([]string, 0, len(invoices))
+
 	for _, inv := range invoices {
 		sort.Slice(inv.items, func(i, j int) bool {
 			return inv.items[i].WindowStart.Before(inv.items[j].WindowStart)
 		})
-		invoice, err := e.db.InsertInvoice(ctx, db.InsertInvoiceParams{
+		invoice, err := qtx.InsertInvoice(ctx, db.InsertInvoiceParams{
 			CustomerID:    inv.customerID,
 			PeriodStart:   inv.periodStart,
 			PeriodEnd:     inv.periodEnd,
@@ -131,7 +139,7 @@ func (e *Engine) RunOnce(ctx context.Context, now time.Time) error {
 			return fmt.Errorf("insert invoice: %w", err)
 		}
 		for _, item := range inv.items {
-			_, err := e.db.InsertInvoiceLineItem(ctx, db.InsertInvoiceLineItemParams{
+			_, err := qtx.InsertInvoiceLineItem(ctx, db.InsertInvoiceLineItemParams{
 				InvoiceID:      invoice.ID,
 				ServiceID:      item.ServiceID,
 				WindowStart:    item.WindowStart,
@@ -147,14 +155,22 @@ func (e *Engine) RunOnce(ctx context.Context, now time.Time) error {
 			}
 		}
 		for _, snapID := range inv.snapshotIDs {
-			if err := e.db.MarkUsageSnapshotInvoiced(ctx, db.MarkUsageSnapshotInvoicedParams{
+			if err := qtx.MarkUsageSnapshotInvoiced(ctx, db.MarkUsageSnapshotInvoicedParams{
 				InvoiceID: sql.NullInt64{Int64: invoice.ID, Valid: true},
 				ID:        snapID,
 			}); err != nil {
 				return fmt.Errorf("mark snapshot %d invoiced: %w", snapID, err)
 			}
 		}
-		e.log.Printf("generated invoice %d for customer %d (line_items=%d total_cents=%d)", invoice.ID, invoice.CustomerID, len(inv.items), invoice.TotalCents)
+		logs = append(logs, fmt.Sprintf("generated invoice %d for customer %d (line_items=%d total_cents=%d)", invoice.ID, invoice.CustomerID, len(inv.items), invoice.TotalCents))
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit invoice batch: %w", err)
+	}
+
+	for _, msg := range logs {
+		e.log.Printf(msg)
 	}
 
 	return nil
