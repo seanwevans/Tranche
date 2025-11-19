@@ -39,36 +39,42 @@ func main() {
 		}
 	}
 
+	reconcile := func() {
+		services, err := queries.GetActiveServices(ctx)
+		if err != nil {
+			logger.Printf("GetActiveServices: %v", err)
+			return
+		}
+		for _, s := range services {
+			weights, err := planner.DesiredRouting(ctx, s.ID)
+			if err != nil {
+				logger.Printf("DesiredRouting(service=%d): %v", s.ID, err)
+				continue
+			}
+			domains, err := queries.GetServiceDomains(ctx, s.ID)
+			if err != nil {
+				logger.Printf("GetServiceDomains(service=%d): %v", s.ID, err)
+				continue
+			}
+			for _, dom := range domains {
+				if err := dnsProv.SetWeights(dom.Name, weights.Primary, weights.Backup); err != nil {
+					logger.Printf("SetWeights(%s): %v", dom.Name, err)
+				}
+			}
+		}
+	}
+
 	ticker := time.NewTicker(15 * time.Second)
 	defer ticker.Stop()
+
+	reconcile()
 
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			services, err := queries.GetActiveServices(ctx)
-			if err != nil {
-				logger.Printf("GetActiveServices: %v", err)
-				continue
-			}
-			for _, s := range services {
-				weights, err := planner.DesiredRouting(ctx, s.ID)
-				if err != nil {
-					logger.Printf("DesiredRouting(service=%d): %v", s.ID, err)
-					continue
-				}
-				domains, err := queries.GetServiceDomains(ctx, s.ID)
-				if err != nil {
-					logger.Printf("GetServiceDomains(service=%d): %v", s.ID, err)
-					continue
-				}
-				for _, dom := range domains {
-					if err := dnsProv.SetWeights(dom.Name, weights.Primary, weights.Backup); err != nil {
-						logger.Printf("SetWeights(%s): %v", dom.Name, err)
-					}
-				}
-			}
+			reconcile()
 		}
 	}
 }
