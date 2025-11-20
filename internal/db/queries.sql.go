@@ -274,6 +274,30 @@ func (q *Queries) GetMaxCoverageFactorForService(ctx context.Context, serviceID 
 	return max_coverage_factor, err
 }
 
+const getProbeAvailability = `-- name: GetProbeAvailability :one
+SELECT
+    COALESCE(
+        AVG(CASE WHEN ok THEN 1 ELSE 0 END)::double precision,
+        $1::double precision
+    ) AS availability
+FROM probe_samples
+WHERE service_id = $2
+  AND probed_at >= $3
+`
+
+type GetProbeAvailabilityParams struct {
+	EmptyAvailability float64   `json:"empty_availability"`
+	ServiceID         int64     `json:"service_id"`
+	Cutoff            time.Time `json:"cutoff"`
+}
+
+func (q *Queries) GetProbeAvailability(ctx context.Context, arg GetProbeAvailabilityParams) (interface{}, error) {
+	row := q.db.QueryRowContext(ctx, getProbeAvailability, arg.EmptyAvailability, arg.ServiceID, arg.Cutoff)
+	var availability interface{}
+	err := row.Scan(&availability)
+	return availability, err
+}
+
 const getServiceDomains = `-- name: GetServiceDomains :many
 SELECT id, service_id, name, created_at
 FROM service_domains
@@ -499,24 +523,6 @@ WHERE us.invoice_id IS NULL
 ORDER BY us.window_start
 `
 
-const lockUnbilledUsageSnapshots = `-- name: LockUnbilledUsageSnapshots :many
-SELECT
-    us.id,
-    us.service_id,
-    s.customer_id,
-    us.window_start,
-    us.window_end,
-    us.primary_bytes,
-    us.backup_bytes
-FROM usage_snapshots us
-JOIN services s ON s.id = us.service_id
-WHERE us.invoice_id IS NULL
-  AND us.window_end <= $1
-  AND us.window_end > $2
-ORDER BY us.window_start
-FOR UPDATE SKIP LOCKED
-`
-
 type GetUnbilledUsageSnapshotsParams struct {
 	WindowEnd   time.Time `json:"window_end"`
 	WindowStart time.Time `json:"window_start"`
@@ -541,52 +547,6 @@ func (q *Queries) GetUnbilledUsageSnapshots(ctx context.Context, arg GetUnbilled
 	items := []GetUnbilledUsageSnapshotsRow{}
 	for rows.Next() {
 		var i GetUnbilledUsageSnapshotsRow
-		if err := rows.Scan(
-			&i.ID,
-			&i.ServiceID,
-			&i.CustomerID,
-			&i.WindowStart,
-			&i.WindowEnd,
-			&i.PrimaryBytes,
-			&i.BackupBytes,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-type LockUnbilledUsageSnapshotsParams struct {
-	WindowEnd   time.Time `json:"window_end"`
-	WindowStart time.Time `json:"window_start"`
-}
-
-type LockUnbilledUsageSnapshotsRow struct {
-	ID           int64     `json:"id"`
-	ServiceID    int64     `json:"service_id"`
-	CustomerID   int64     `json:"customer_id"`
-	WindowStart  time.Time `json:"window_start"`
-	WindowEnd    time.Time `json:"window_end"`
-	PrimaryBytes int64     `json:"primary_bytes"`
-	BackupBytes  int64     `json:"backup_bytes"`
-}
-
-func (q *Queries) LockUnbilledUsageSnapshots(ctx context.Context, arg LockUnbilledUsageSnapshotsParams) ([]LockUnbilledUsageSnapshotsRow, error) {
-	rows, err := q.db.QueryContext(ctx, lockUnbilledUsageSnapshots, arg.WindowEnd, arg.WindowStart)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []LockUnbilledUsageSnapshotsRow{}
-	for rows.Next() {
-		var i LockUnbilledUsageSnapshotsRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.ServiceID,
@@ -701,6 +661,30 @@ func (q *Queries) InsertInvoiceLineItem(ctx context.Context, arg InsertInvoiceLi
 		&i.CreatedAt,
 	)
 	return i, err
+}
+
+const insertProbeSample = `-- name: InsertProbeSample :exec
+INSERT INTO probe_samples (service_id, metrics_key, probed_at, ok, latency_ms)
+VALUES ($1, $2, $3, $4, $5)
+`
+
+type InsertProbeSampleParams struct {
+	ServiceID  int64         `json:"service_id"`
+	MetricsKey string        `json:"metrics_key"`
+	ProbedAt   time.Time     `json:"probed_at"`
+	Ok         bool          `json:"ok"`
+	LatencyMs  sql.NullInt32 `json:"latency_ms"`
+}
+
+func (q *Queries) InsertProbeSample(ctx context.Context, arg InsertProbeSampleParams) error {
+	_, err := q.db.ExecContext(ctx, insertProbeSample,
+		arg.ServiceID,
+		arg.MetricsKey,
+		arg.ProbedAt,
+		arg.Ok,
+		arg.LatencyMs,
+	)
+	return err
 }
 
 const insertService = `-- name: InsertService :one
@@ -825,6 +809,70 @@ func (q *Queries) InsertStormPolicy(ctx context.Context, arg InsertStormPolicyPa
 		&i.CreatedAt,
 	)
 	return i, err
+}
+
+const lockUnbilledUsageSnapshots = `-- name: LockUnbilledUsageSnapshots :many
+SELECT
+    us.id,
+    us.service_id,
+    s.customer_id,
+    us.window_start,
+    us.window_end,
+    us.primary_bytes,
+    us.backup_bytes
+FROM usage_snapshots us
+JOIN services s ON s.id = us.service_id
+WHERE us.invoice_id IS NULL
+  AND us.window_end <= $1
+  AND us.window_end > $2
+ORDER BY us.window_start
+FOR UPDATE SKIP LOCKED
+`
+
+type LockUnbilledUsageSnapshotsParams struct {
+	WindowEnd   time.Time `json:"window_end"`
+	WindowStart time.Time `json:"window_start"`
+}
+
+type LockUnbilledUsageSnapshotsRow struct {
+	ID           int64     `json:"id"`
+	ServiceID    int64     `json:"service_id"`
+	CustomerID   int64     `json:"customer_id"`
+	WindowStart  time.Time `json:"window_start"`
+	WindowEnd    time.Time `json:"window_end"`
+	PrimaryBytes int64     `json:"primary_bytes"`
+	BackupBytes  int64     `json:"backup_bytes"`
+}
+
+func (q *Queries) LockUnbilledUsageSnapshots(ctx context.Context, arg LockUnbilledUsageSnapshotsParams) ([]LockUnbilledUsageSnapshotsRow, error) {
+	rows, err := q.db.QueryContext(ctx, lockUnbilledUsageSnapshots, arg.WindowEnd, arg.WindowStart)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []LockUnbilledUsageSnapshotsRow{}
+	for rows.Next() {
+		var i LockUnbilledUsageSnapshotsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.ServiceID,
+			&i.CustomerID,
+			&i.WindowStart,
+			&i.WindowEnd,
+			&i.PrimaryBytes,
+			&i.BackupBytes,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const markStormEventResolved = `-- name: MarkStormEventResolved :one

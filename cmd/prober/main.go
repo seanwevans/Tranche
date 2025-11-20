@@ -25,9 +25,8 @@ func main() {
 		logger.Fatalf("opening db: %v", err)
 	}
 
-	metrics := monitor.NewInMemoryMetrics()
-	mv := monitor.NewMetricsView(metrics)
-	stormEng := storm.NewEngine(queries, mv, logger)
+	metrics := monitor.NewPostgresMetrics(queries)
+	stormEng := storm.NewEngine(queries, metrics, logger)
 
 	probeSched := monitor.NewScheduler(queries, metrics, logger, monitor.ProbeConfig{
 		Path:    cfg.ProbePath,

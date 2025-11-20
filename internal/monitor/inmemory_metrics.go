@@ -1,6 +1,7 @@
 package monitor
 
 import (
+	"context"
 	"sync"
 	"time"
 )
@@ -30,7 +31,7 @@ func NewInMemoryMetricsWithDefault(emptyAvailability float64) *InMemoryMetrics {
 	}
 }
 
-func (m *InMemoryMetrics) RecordProbe(serviceID int64, target string, ok bool, _ time.Duration) {
+func (m *InMemoryMetrics) RecordProbe(_ context.Context, serviceID int64, target string, ok bool, _ time.Duration) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if _, ok := m.samples[serviceID]; !ok {
@@ -40,16 +41,17 @@ func (m *InMemoryMetrics) RecordProbe(serviceID int64, target string, ok bool, _
 		t:  time.Now(),
 		ok: ok,
 	})
+	return nil
 }
 
-func (m *InMemoryMetrics) Availability(serviceID int64, window time.Duration) float64 {
+func (m *InMemoryMetrics) Availability(_ context.Context, serviceID int64, window time.Duration) (float64, error) {
 	cutoff := time.Now().Add(-window)
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	targets := m.samples[serviceID]
 	if len(targets) == 0 {
-		return m.emptyAvailability
+		return m.emptyAvailability, nil
 	}
 
 	total := 0
@@ -81,10 +83,10 @@ func (m *InMemoryMetrics) Availability(serviceID int64, window time.Duration) fl
 	}
 	if len(targets) == 0 {
 		delete(m.samples, serviceID)
-		return m.emptyAvailability
+		return m.emptyAvailability, nil
 	}
 	if total == 0 {
-		return m.emptyAvailability
+		return m.emptyAvailability, nil
 	}
-	return float64(okCount) / float64(total)
+	return float64(okCount) / float64(total), nil
 }
