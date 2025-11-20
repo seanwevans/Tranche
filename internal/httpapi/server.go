@@ -21,6 +21,8 @@ type Server struct {
 	r   chi.Router
 }
 
+const maxRequestBodyBytes int64 = 1 << 20 // 1 MiB
+
 type Logger interface {
 	Printf(string, ...any)
 	Println(...any)
@@ -91,7 +93,7 @@ func (s *Server) handleCreateService(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req createServiceRequest
-	if err := decodeJSON(r.Body, &req); err != nil {
+	if err := decodeJSON(http.MaxBytesReader(w, r.Body, maxRequestBodyBytes), &req); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error(), nil)
 		return
 	}
@@ -177,7 +179,7 @@ func (s *Server) handleUpdateService(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req updateServiceRequest
-	if err := decodeJSON(r.Body, &req); err != nil {
+	if err := decodeJSON(http.MaxBytesReader(w, r.Body, maxRequestBodyBytes), &req); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error(), nil)
 		return
 	}
@@ -246,7 +248,7 @@ func (s *Server) handleCreateDomain(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req domainRequest
-	if err := decodeJSON(r.Body, &req); err != nil {
+	if err := decodeJSON(http.MaxBytesReader(w, r.Body, maxRequestBodyBytes), &req); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error(), nil)
 		return
 	}
@@ -309,7 +311,7 @@ func (s *Server) handleCreateStormPolicy(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	var req stormPolicyRequest
-	if err := decodeJSON(r.Body, &req); err != nil {
+	if err := decodeJSON(http.MaxBytesReader(w, r.Body, maxRequestBodyBytes), &req); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error(), nil)
 		return
 	}
@@ -347,7 +349,7 @@ func (s *Server) handleUpdateStormPolicy(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	var req stormPolicyPatchRequest
-	if err := decodeJSON(r.Body, &req); err != nil {
+	if err := decodeJSON(http.MaxBytesReader(w, r.Body, maxRequestBodyBytes), &req); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error(), nil)
 		return
 	}
