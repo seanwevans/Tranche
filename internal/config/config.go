@@ -8,25 +8,27 @@ import (
 )
 
 type Config struct {
-	PGDSN                 string
-	HTTPAddr              string
-	ProbePath             string
-	ProbeTimeout          time.Duration
-	BillingPeriod         time.Duration
-	BillingRateCentsPerGB int64
-	BillingDiscountRate   float64
-	UsageWindow           time.Duration
-	UsageLookback         time.Duration
-	UsageTick             time.Duration
-	AWSRegion             string
-	AWSAccessKey          string
-	AWSSecretKey          string
-	AWSSession            string
-	CDNDefaultProvider    string
-	CDNServiceProviders   map[int64]string
-	CDNCustomerProviders  map[int64]string
-	Cloudflare            CloudflareConfig
-	UsageWindow           time.Duration
+	PGDSN                  string
+	HTTPAddr               string
+	ProbePath              string
+	ProbeTimeout           time.Duration
+	BillingPeriod          time.Duration
+	BillingRateCentsPerGB  int64
+	BillingDiscountRate    float64
+	UsageWindow            time.Duration
+	UsageLookback          time.Duration
+	UsageTick              time.Duration
+	ControlPlaneAdminToken string
+	AWSRegion              string
+	AWSAccessKey           string
+	AWSSecretKey           string
+	AWSSession             string
+	CDNDefaultProvider     string
+	CDNServiceProviders    map[int64]string
+	CDNCustomerProviders   map[int64]string
+	CloudflareAccountID    string
+	CloudflareAPIToken     string
+	Cloudflare             CloudflareConfig
 }
 
 type CloudflareConfig struct {
@@ -37,31 +39,33 @@ type CloudflareConfig struct {
 
 func Load() Config {
 	cfg := Config{
-		CloudflareAccountID:   os.Getenv("CLOUDFLARE_ACCOUNT_ID"),
-		CloudflareAPIToken:    os.Getenv("CLOUDFLARE_API_TOKEN"),
-		AWSRegion:             os.Getenv("AWS_REGION"),
-		AWSAccessKey:          os.Getenv("AWS_ACCESS_KEY_ID"),
-		AWSSecretKey:          os.Getenv("AWS_SECRET_ACCESS_KEY"),
-		AWSSession:            os.Getenv("AWS_SESSION_TOKEN"),
-		PGDSN:                 getenv("PG_DSN", "postgres://user:pass@localhost:5432/tranche?sslmode=disable"),
-		HTTPAddr:              getenv("HTTP_ADDR", ":8080"),
-		ProbePath:             getenv("PROBE_PATH", "/healthz"),
-		ProbeTimeout:          durationEnv("PROBE_TIMEOUT", 5*time.Second),
-		BillingPeriod:         durationEnv("BILLING_PERIOD", 24*time.Hour),
-		BillingRateCentsPerGB: intEnv("BILLING_RATE_CENTS_PER_GB", 12),
-		BillingDiscountRate:   floatEnv("BILLING_DISCOUNT_RATE", 0.5),
-		CDNDefaultProvider:    getenv("CDN_DEFAULT_PROVIDER", ""),
-		CDNServiceProviders:   parseProviderOverrides("CDN_PROVIDER_SERVICE_OVERRIDES"),
-		CDNCustomerProviders:  parseProviderOverrides("CDN_PROVIDER_CUSTOMER_OVERRIDES"),
+		ControlPlaneAdminToken: os.Getenv("CONTROL_PLANE_ADMIN_TOKEN"),
+		CloudflareAccountID:    os.Getenv("CLOUDFLARE_ACCOUNT_ID"),
+		CloudflareAPIToken:     os.Getenv("CLOUDFLARE_API_TOKEN"),
+		AWSRegion:              os.Getenv("AWS_REGION"),
+		AWSAccessKey:           os.Getenv("AWS_ACCESS_KEY_ID"),
+		AWSSecretKey:           os.Getenv("AWS_SECRET_ACCESS_KEY"),
+		AWSSession:             os.Getenv("AWS_SESSION_TOKEN"),
+		PGDSN:                  getenv("PG_DSN", "postgres://user:pass@localhost:5432/tranche?sslmode=disable"),
+		HTTPAddr:               getenv("HTTP_ADDR", ":8080"),
+		ProbePath:              getenv("PROBE_PATH", "/healthz"),
+		ProbeTimeout:           durationEnv("PROBE_TIMEOUT", 5*time.Second),
+		BillingPeriod:          durationEnv("BILLING_PERIOD", 24*time.Hour),
+		BillingRateCentsPerGB:  intEnv("BILLING_RATE_CENTS_PER_GB", 12),
+		BillingDiscountRate:    floatEnv("BILLING_DISCOUNT_RATE", 0.5),
+		CDNDefaultProvider:     getenv("CDN_DEFAULT_PROVIDER", ""),
+		CDNServiceProviders:    parseProviderOverrides("CDN_PROVIDER_SERVICE_OVERRIDES"),
+		CDNCustomerProviders:   parseProviderOverrides("CDN_PROVIDER_CUSTOMER_OVERRIDES"),
 		Cloudflare: CloudflareConfig{
 			APIToken:       os.Getenv("CLOUDFLARE_API_TOKEN"),
 			DefaultAccount: getenv("CLOUDFLARE_ACCOUNT_ID", ""),
 			ZoneConfigJSON: os.Getenv("CLOUDFLARE_ZONE_CONFIG"),
 		},
-		UsageWindow:           durationEnv("USAGE_WINDOW", time.Hour),
-		UsageLookback:         durationEnv("USAGE_LOOKBACK", 6*time.Hour),
-		UsageTick:             durationEnv("USAGE_TICK", 5*time.Minute),
+		UsageWindow:   durationEnv("USAGE_WINDOW", time.Hour),
+		UsageLookback: durationEnv("USAGE_LOOKBACK", 6*time.Hour),
+		UsageTick:     durationEnv("USAGE_TICK", 5*time.Minute),
 	}
+
 	return cfg
 }
 
