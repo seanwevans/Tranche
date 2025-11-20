@@ -144,7 +144,7 @@ FROM usage_snapshots us
 JOIN services s ON s.id = us.service_id
 WHERE us.invoice_id IS NULL
   AND us.window_end <= sqlc.arg(window_end)
-  AND us.window_end > sqlc.arg(window_start)
+  AND us.window_end >= sqlc.arg(window_start)
 ORDER BY us.window_start;
 
 -- name: LockUnbilledUsageSnapshots :many
