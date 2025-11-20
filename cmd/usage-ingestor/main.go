@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"log"
 	"os/signal"
 	"syscall"
 	"time"
@@ -11,14 +12,19 @@ import (
 	"tranche/internal/config"
 	"tranche/internal/db"
 	"tranche/internal/logging"
+	"tranche/internal/usageingestor"
 )
 
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
-
 	cfg := config.Load()
 	logger := logging.New()
+
+	provider := cloudflare.NewClient(cfg.CloudflareAccountID, cfg.CloudflareAPIToken)
+	if cfg.CloudflareAccountID == "" || cfg.CloudflareAPIToken == "" {
+		logger.Fatal("CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN must be set")
+	}
 
 	sqlDB, queries, err := db.Open(ctx, cfg.PGDSN)
 	if err != nil {
@@ -26,38 +32,20 @@ func main() {
 	}
 	defer sqlDB.Close()
 
-	providers := []cdn.Provider{}
-	if cfg.Cloudflare.APIToken != "" {
-		p, err := cf.NewProvider(cfg.Cloudflare, logger)
-		if err != nil {
-			logger.Fatalf("init cloudflare provider: %v", err)
-		}
-		providers = append(providers, p)
-	}
+	engine := usageingestor.NewEngine(queries, provider, logger, cfg.UsageWindow, cfg.UsageLookback)
 
-	selector, err := cdn.NewSelector(cdn.SelectorConfig{
-		DefaultProvider:   cfg.CDNDefaultProvider,
-		CustomerOverrides: cfg.CDNCustomerProviders,
-		ServiceOverrides:  cfg.CDNServiceProviders,
-		Providers:         providers,
-	})
-	if err != nil {
-		logger.Fatalf("init provider selector: %v", err)
-	}
-
-	ingestor := cdn.NewUsageIngestor(queries, selector, logger, cfg.UsageWindow)
-
-	ticker := time.NewTicker(cfg.UsageWindow)
+	ticker := time.NewTicker(cfg.UsageTick)
 	defer ticker.Stop()
 
+	logger.Printf("usage ingestor starting with window %s lookback %s", cfg.UsageWindow, cfg.UsageLookback)
 	for {
-		if err := ingestor.RunOnce(ctx, time.Now()); err != nil {
-			logger.Printf("usage ingestion tick error: %v", err)
-		}
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+			if err := engine.RunOnce(ctx, time.Now()); err != nil {
+				log.Printf("usage ingestion error: %v", err)
+			}
 		}
 	}
 }

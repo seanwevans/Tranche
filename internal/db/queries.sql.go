@@ -309,6 +309,40 @@ func (q *Queries) GetServiceDomains(ctx context.Context, serviceID int64) ([]Ser
 	return items, nil
 }
 
+const getAllServiceDomains = `-- name: GetAllServiceDomains :many
+SELECT id, service_id, name, created_at
+FROM service_domains
+ORDER BY service_id, id
+`
+
+func (q *Queries) GetAllServiceDomains(ctx context.Context) ([]ServiceDomain, error) {
+	rows, err := q.db.QueryContext(ctx, getAllServiceDomains)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ServiceDomain{}
+	for rows.Next() {
+		var i ServiceDomain
+		if err := rows.Scan(
+			&i.ID,
+			&i.ServiceID,
+			&i.Name,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getServiceForCustomer = `-- name: GetServiceForCustomer :one
 SELECT id, customer_id, name, primary_cdn, backup_cdn, created_at, deleted_at
 FROM services
@@ -834,13 +868,22 @@ func (q *Queries) MarkUsageSnapshotInvoiced(ctx context.Context, arg MarkUsageSn
 	return err
 }
 
-const insertUsageSnapshot = `-- name: InsertUsageSnapshot :one
-INSERT INTO usage_snapshots (service_id, window_start, window_end, primary_bytes, backup_bytes)
+const upsertUsageSnapshot = `-- name: UpsertUsageSnapshot :exec
+INSERT INTO usage_snapshots (
+        service_id,
+        window_start,
+        window_end,
+        primary_bytes,
+        backup_bytes)
 VALUES ($1, $2, $3, $4, $5)
-RETURNING id, service_id, window_start, window_end, primary_bytes, backup_bytes, created_at, invoice_id
+ON CONFLICT (service_id, window_start, window_end)
+DO UPDATE SET
+        primary_bytes = EXCLUDED.primary_bytes,
+        backup_bytes = EXCLUDED.backup_bytes,
+        created_at = NOW()
 `
 
-type InsertUsageSnapshotParams struct {
+type UpsertUsageSnapshotParams struct {
 	ServiceID    int64     `json:"service_id"`
 	WindowStart  time.Time `json:"window_start"`
 	WindowEnd    time.Time `json:"window_end"`
@@ -848,20 +891,15 @@ type InsertUsageSnapshotParams struct {
 	BackupBytes  int64     `json:"backup_bytes"`
 }
 
-func (q *Queries) InsertUsageSnapshot(ctx context.Context, arg InsertUsageSnapshotParams) (UsageSnapshot, error) {
-	row := q.db.QueryRowContext(ctx, insertUsageSnapshot, arg.ServiceID, arg.WindowStart, arg.WindowEnd, arg.PrimaryBytes, arg.BackupBytes)
-	var i UsageSnapshot
-	err := row.Scan(
-		&i.ID,
-		&i.ServiceID,
-		&i.WindowStart,
-		&i.WindowEnd,
-		&i.PrimaryBytes,
-		&i.BackupBytes,
-		&i.CreatedAt,
-		&i.InvoiceID,
+func (q *Queries) UpsertUsageSnapshot(ctx context.Context, arg UpsertUsageSnapshotParams) error {
+	_, err := q.db.ExecContext(ctx, upsertUsageSnapshot,
+		arg.ServiceID,
+		arg.WindowStart,
+		arg.WindowEnd,
+		arg.PrimaryBytes,
+		arg.BackupBytes,
 	)
-	return i, err
+	return err
 }
 
 const softDeleteService = `-- name: SoftDeleteService :one
