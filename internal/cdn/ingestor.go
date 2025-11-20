@@ -59,7 +59,7 @@ func (i *UsageIngestor) ingestService(ctx context.Context, svc db.Service, start
 		return fmt.Errorf("fetch usage: %w", err)
 	}
 
-	if _, err := i.db.InsertUsageSnapshot(ctx, db.InsertUsageSnapshotParams{
+	if err := i.db.UpsertUsageSnapshot(ctx, db.UpsertUsageSnapshotParams{
 		ServiceID:    svc.ID,
 		WindowStart:  start,
 		WindowEnd:    end,

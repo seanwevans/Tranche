@@ -11,16 +11,20 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/go-chi/chi/v5/middleware"
 	"github.com/jackc/pgx/v5/pgconn"
 
 	"tranche/internal/db"
+	"tranche/internal/logging"
 )
 
 type Server struct {
-	log        Logger
+	log        *logging.Logger
 	db         *db.Queries
+	sqlDB      *sql.DB
 	r          chi.Router
 	adminToken string
 }
@@ -34,14 +38,8 @@ type authContext struct {
 
 const maxRequestBodyBytes int64 = 1 << 20 // 1 MiB
 
-type Logger interface {
-	Printf(string, ...any)
-	Println(...any)
-	Fatalf(string, ...any)
-}
-
-func NewServer(log Logger, dbx *db.Queries, adminToken string) *Server {
-	s := &Server{log: log, db: dbx, r: chi.NewRouter(), adminToken: strings.TrimSpace(adminToken)}
+func NewServer(log *logging.Logger, conn *sql.DB, dbx *db.Queries, adminToken string) *Server {
+	s := &Server{log: log, db: dbx, sqlDB: conn, r: chi.NewRouter(), adminToken: strings.TrimSpace(adminToken)}
 	s.routes()
 	return s
 }
@@ -49,7 +47,10 @@ func NewServer(log Logger, dbx *db.Queries, adminToken string) *Server {
 func (s *Server) Router() http.Handler { return s.r }
 
 func (s *Server) routes() {
+	s.r.Use(middleware.RequestID)
+	s.r.Use(s.loggingMiddleware)
 	s.r.Get("/healthz", s.handleHealth)
+	s.r.Get("/readyz", s.handleReady)
 	s.r.Route("/v1", func(r chi.Router) {
 		r.Use(s.authMiddleware)
 		r.Route("/services", func(r chi.Router) {
@@ -85,6 +86,7 @@ var (
 
 func (s *Server) authMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		baseLogger := logging.FromContext(r.Context(), s.log)
 		token := strings.TrimSpace(r.Header.Get("Authorization"))
 		if strings.HasPrefix(strings.ToLower(token), "bearer ") {
 			token = strings.TrimSpace(token[7:])
@@ -108,6 +110,7 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 				return
 			}
 			ctx := context.WithValue(r.Context(), authContextKey{}, authContext{customerID: customerID, superuser: true})
+			ctx = logging.ContextWithLogger(ctx, baseLogger.WithCustomerID(customerID))
 			next.ServeHTTP(w, r.WithContext(ctx))
 			return
 		}
@@ -119,12 +122,22 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 				writeError(w, http.StatusUnauthorized, "invalid API token", nil)
 				return
 			}
-			s.log.Printf("GetCustomerIDForToken: %v", err)
+			baseLogger.Error("GetCustomerIDForToken failed", "error", err)
 			writeError(w, http.StatusInternalServerError, "authentication failed", nil)
 			return
 		}
 
 		ctx := context.WithValue(r.Context(), authContextKey{}, authContext{customerID: customerID})
+		ctx = logging.ContextWithLogger(ctx, baseLogger.WithCustomerID(customerID))
+		next.ServeHTTP(w, r.WithContext(ctx))
+	})
+}
+
+func (s *Server) loggingMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		reqID := middleware.GetReqID(r.Context())
+		logger := s.log.WithRequestID(reqID)
+		ctx := logging.ContextWithLogger(r.Context(), logger)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
@@ -181,6 +194,18 @@ func (s *Server) requireCustomerID(w http.ResponseWriter, r *http.Request) (int6
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte("ok"))
+}
+
+func (s *Server) handleReady(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+	defer cancel()
+	if err := db.Ready(ctx, s.sqlDB); err != nil {
+		s.log.WithRequestID(middleware.GetReqID(r.Context())).Error("readyz failed", "error", err.Error())
+		writeError(w, http.StatusServiceUnavailable, "not ready", map[string]string{"error": err.Error()})
+		return
+	}
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte("ok"))
 }

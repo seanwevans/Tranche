@@ -21,7 +21,7 @@ func TestSelectorPrecedence(t *testing.T) {
 		DefaultProvider:   "default",
 		CustomerOverrides: map[int64]string{1: "customer"},
 		ServiceOverrides:  map[int64]string{2: "service"},
-		Providers: []Provider{
+		Providers: []UsageProvider{
 			fakeProvider{name: "default"},
 			fakeProvider{name: "customer"},
 			fakeProvider{name: "service"},

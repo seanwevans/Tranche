@@ -26,15 +26,26 @@ type Logger interface {
 	Printf(string, ...any)
 }
 
+type Metrics interface {
+	RecordStormEvent(serviceID int64, kind string, phase string)
+	SetStormActive(serviceID int64, kind string, active bool)
+}
+
 type Engine struct {
 	db  stormStore
 	mv  MetricsView
 	log Logger
+	m   Metrics
 	now func() time.Time
 }
 
 func NewEngine(dbx stormStore, mv MetricsView, log Logger) *Engine {
 	return &Engine{db: dbx, mv: mv, log: log, now: time.Now}
+}
+
+func (e *Engine) WithMetrics(m Metrics) *Engine {
+	e.m = m
+	return e
 }
 
 func (e *Engine) Tick(ctx context.Context) error {
@@ -75,6 +86,9 @@ func (e *Engine) evaluatePolicy(ctx context.Context, serviceID int64, p db.Storm
 
 	if avail < p.ThresholdAvail {
 		if hasActive {
+			if e.m != nil {
+				e.m.SetStormActive(serviceID, p.Kind, true)
+			}
 			return nil
 		}
 
@@ -93,11 +107,19 @@ func (e *Engine) evaluatePolicy(ctx context.Context, serviceID int64, p db.Storm
 		}
 
 		_, err = e.db.InsertStormEvent(ctx, db.InsertStormEventParams{ServiceID: serviceID, Kind: p.Kind})
+		if err == nil && e.m != nil {
+			e.m.RecordStormEvent(serviceID, p.Kind, "started")
+			e.m.SetStormActive(serviceID, p.Kind, true)
+		}
 		return err
 	}
 
 	if hasActive {
 		_, err = e.db.MarkStormEventResolved(ctx, db.MarkStormEventResolvedParams{ID: activeStorm.ID, EndedAt: sql.NullTime{Time: now, Valid: true}})
+		if err == nil && e.m != nil {
+			e.m.RecordStormEvent(serviceID, p.Kind, "resolved")
+			e.m.SetStormActive(serviceID, p.Kind, false)
+		}
 		return err
 	}
 

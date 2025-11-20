@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"os/signal"
 	"syscall"
 	"time"
@@ -10,6 +11,7 @@ import (
 	"tranche/internal/db"
 	"tranche/internal/dns"
 	"tranche/internal/logging"
+	"tranche/internal/observability"
 	"tranche/internal/routing"
 )
 
@@ -17,7 +19,7 @@ func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 	cfg := config.Load()
-	logger := logging.New()
+	logger := logging.New("dns-operator")
 
 	sqlDB, queries, err := db.Open(ctx, cfg.PGDSN)
 	if err != nil {
@@ -25,7 +27,10 @@ func main() {
 	}
 
 	planner := routing.NewPlanner(queries)
-	var dnsProv dns.Provider = dns.NewNoopProvider(logger)
+	var (
+		dnsProv      dns.Provider = dns.NewNoopProvider(logger)
+		providerInit bool
+	)
 	if cfg.AWSRegion != "" {
 		awsCfg := dns.Route53ProviderConfig{
 			Region:          cfg.AWSRegion,
@@ -38,8 +43,22 @@ func main() {
 			logger.Printf("failed to init Route53 provider, falling back to noop: %v", err)
 		} else {
 			dnsProv = prov
+			providerInit = true
 		}
 	}
+
+	metrics := observability.NewMetrics("dns_operator")
+	readyCheck := func(c context.Context) error {
+		if err := db.Ready(c, sqlDB); err != nil {
+			return err
+		}
+		if cfg.AWSRegion != "" && !providerInit {
+			return fmt.Errorf("route53 provider not initialized")
+		}
+		return nil
+	}
+
+	observability.Start(ctx, cfg.MetricsAddr, logger, metrics.Registry, readyCheck)
 
 	reconcile := func() {
 		servicesCtx, servicesCancel := context.WithTimeout(ctx, 5*time.Second)
@@ -67,7 +86,11 @@ func main() {
 			for _, dom := range domains {
 				setWeightsCtx, setWeightsCancel := context.WithTimeout(ctx, 5*time.Second)
 				if err := dnsProv.SetWeights(setWeightsCtx, dom.Name, weights.Primary, weights.Backup); err != nil {
-					logger.Printf("SetWeights(%s): %v", dom.Name, err)
+					metrics.RecordDNSChange(dom.Name, "route53", err)
+					logger.Error("route53 weight update failed", "domain", dom.Name, "error", err)
+				} else {
+					metrics.RecordDNSChange(dom.Name, "route53", nil)
+					logger.Info("route53 weights updated", "domain", dom.Name, "primary_weight", weights.Primary, "backup_weight", weights.Backup)
 				}
 				setWeightsCancel()
 			}
@@ -111,7 +134,11 @@ func main() {
 				for _, dom := range domains {
 					setWeightsCtx, setWeightsCancel := context.WithTimeout(ctx, 5*time.Second)
 					if err := dnsProv.SetWeights(setWeightsCtx, dom.Name, weights.Primary, weights.Backup); err != nil {
-						logger.Printf("SetWeights(%s): %v", dom.Name, err)
+						metrics.RecordDNSChange(dom.Name, "route53", err)
+						logger.Error("route53 weight update failed", "domain", dom.Name, "error", err)
+					} else {
+						metrics.RecordDNSChange(dom.Name, "route53", nil)
+						logger.Info("route53 weights updated", "domain", dom.Name, "primary_weight", weights.Primary, "backup_weight", weights.Backup)
 					}
 					setWeightsCancel()
 				}
