@@ -79,7 +79,7 @@ type fakeMetricsView struct {
 	err   error
 }
 
-func (f *fakeMetricsView) Availability(serviceID int64, window time.Duration) (float64, error) {
+func (f *fakeMetricsView) Availability(_ context.Context, serviceID int64, window time.Duration) (float64, error) {
 	return f.avail, f.err
 }
 

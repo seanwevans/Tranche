@@ -16,6 +16,12 @@ SELECT customer_id
 FROM customer_tokens
 WHERE token_hash = $1
   AND revoked_at IS NULL;
+-- name: GetUsageSnapshotForWindow :one
+SELECT id, service_id, window_start, window_end, primary_bytes, backup_bytes, created_at, invoice_id
+FROM usage_snapshots
+WHERE service_id = $1
+  AND window_start = $2
+  AND window_end = $3;
 
 -- name: GetServiceForCustomer :one
 SELECT *
@@ -51,6 +57,11 @@ SELECT *
 FROM service_domains
 WHERE service_id = $1
 ORDER BY id;
+
+-- name: GetAllServiceDomains :many
+SELECT *
+FROM service_domains
+ORDER BY service_id, id;
 
 -- name: InsertServiceDomain :one
 INSERT INTO service_domains (service_id, name)
@@ -206,3 +217,30 @@ RETURNING id, invoice_id, service_id, window_start, window_end, primary_bytes, b
 UPDATE usage_snapshots
 SET invoice_id = $1
 WHERE id = $2;
+
+-- name: InsertProbeSample :exec
+INSERT INTO probe_samples (service_id, metrics_key, probed_at, ok, latency_ms)
+VALUES ($1, $2, $3, $4, $5);
+
+-- name: GetProbeAvailability :one
+SELECT
+    COALESCE(
+        AVG(CASE WHEN ok THEN 1 ELSE 0 END)::double precision,
+        sqlc.arg(empty_availability)::double precision
+    ) AS availability
+FROM probe_samples
+WHERE service_id = sqlc.arg(service_id)
+  AND probed_at >= sqlc.arg(cutoff);
+-- name: UpsertUsageSnapshot :exec
+INSERT INTO usage_snapshots (
+        service_id,
+        window_start,
+        window_end,
+        primary_bytes,
+        backup_bytes)
+VALUES ($1, $2, $3, $4, $5)
+ON CONFLICT (service_id, window_start, window_end)
+DO UPDATE SET
+        primary_bytes = EXCLUDED.primary_bytes,
+        backup_bytes = EXCLUDED.backup_bytes,
+        created_at = NOW();

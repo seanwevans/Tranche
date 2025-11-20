@@ -49,6 +49,15 @@ type InvoiceLineItem struct {
 	CreatedAt      time.Time `json:"created_at"`
 }
 
+type ProbeSample struct {
+	ID         int64         `json:"id"`
+	ServiceID  int64         `json:"service_id"`
+	MetricsKey string        `json:"metrics_key"`
+	ProbedAt   time.Time     `json:"probed_at"`
+	Ok         bool          `json:"ok"`
+	LatencyMs  sql.NullInt32 `json:"latency_ms"`
+}
+
 type Service struct {
 	ID         int64        `json:"id"`
 	CustomerID int64        `json:"customer_id"`

@@ -140,6 +140,36 @@ func (q *Queries) GetActiveServicesForCustomer(ctx context.Context, customerID i
 	return items, nil
 }
 
+const getUsageSnapshotForWindow = `-- name: GetUsageSnapshotForWindow :one
+SELECT id, service_id, window_start, window_end, primary_bytes, backup_bytes, created_at, invoice_id
+FROM usage_snapshots
+WHERE service_id = $1
+  AND window_start = $2
+  AND window_end = $3
+`
+
+type GetUsageSnapshotForWindowParams struct {
+	ServiceID   int64     `json:"service_id"`
+	WindowStart time.Time `json:"window_start"`
+	WindowEnd   time.Time `json:"window_end"`
+}
+
+func (q *Queries) GetUsageSnapshotForWindow(ctx context.Context, arg GetUsageSnapshotForWindowParams) (UsageSnapshot, error) {
+	row := q.db.QueryRowContext(ctx, getUsageSnapshotForWindow, arg.ServiceID, arg.WindowStart, arg.WindowEnd)
+	var i UsageSnapshot
+	err := row.Scan(
+		&i.ID,
+		&i.ServiceID,
+		&i.WindowStart,
+		&i.WindowEnd,
+		&i.PrimaryBytes,
+		&i.BackupBytes,
+		&i.CreatedAt,
+		&i.InvoiceID,
+	)
+	return i, err
+}
+
 const getActiveStormForPolicy = `-- name: GetActiveStormForPolicy :one
 SELECT id, service_id, kind, started_at, ended_at
 FROM storm_events
@@ -258,6 +288,30 @@ func (q *Queries) GetMaxCoverageFactorForService(ctx context.Context, serviceID 
 	return max_coverage_factor, err
 }
 
+const getProbeAvailability = `-- name: GetProbeAvailability :one
+SELECT
+    COALESCE(
+        AVG(CASE WHEN ok THEN 1 ELSE 0 END)::double precision,
+        $1::double precision
+    ) AS availability
+FROM probe_samples
+WHERE service_id = $2
+  AND probed_at >= $3
+`
+
+type GetProbeAvailabilityParams struct {
+	EmptyAvailability float64   `json:"empty_availability"`
+	ServiceID         int64     `json:"service_id"`
+	Cutoff            time.Time `json:"cutoff"`
+}
+
+func (q *Queries) GetProbeAvailability(ctx context.Context, arg GetProbeAvailabilityParams) (interface{}, error) {
+	row := q.db.QueryRowContext(ctx, getProbeAvailability, arg.EmptyAvailability, arg.ServiceID, arg.Cutoff)
+	var availability interface{}
+	err := row.Scan(&availability)
+	return availability, err
+}
+
 const getServiceDomains = `-- name: GetServiceDomains :many
 SELECT id, service_id, name, created_at
 FROM service_domains
@@ -267,6 +321,40 @@ ORDER BY id
 
 func (q *Queries) GetServiceDomains(ctx context.Context, serviceID int64) ([]ServiceDomain, error) {
 	rows, err := q.db.QueryContext(ctx, getServiceDomains, serviceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ServiceDomain{}
+	for rows.Next() {
+		var i ServiceDomain
+		if err := rows.Scan(
+			&i.ID,
+			&i.ServiceID,
+			&i.Name,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getAllServiceDomains = `-- name: GetAllServiceDomains :many
+SELECT id, service_id, name, created_at
+FROM service_domains
+ORDER BY service_id, id
+`
+
+func (q *Queries) GetAllServiceDomains(ctx context.Context) ([]ServiceDomain, error) {
+	rows, err := q.db.QueryContext(ctx, getAllServiceDomains)
 	if err != nil {
 		return nil, err
 	}
@@ -589,6 +677,30 @@ func (q *Queries) InsertInvoiceLineItem(ctx context.Context, arg InsertInvoiceLi
 	return i, err
 }
 
+const insertProbeSample = `-- name: InsertProbeSample :exec
+INSERT INTO probe_samples (service_id, metrics_key, probed_at, ok, latency_ms)
+VALUES ($1, $2, $3, $4, $5)
+`
+
+type InsertProbeSampleParams struct {
+	ServiceID  int64         `json:"service_id"`
+	MetricsKey string        `json:"metrics_key"`
+	ProbedAt   time.Time     `json:"probed_at"`
+	Ok         bool          `json:"ok"`
+	LatencyMs  sql.NullInt32 `json:"latency_ms"`
+}
+
+func (q *Queries) InsertProbeSample(ctx context.Context, arg InsertProbeSampleParams) error {
+	_, err := q.db.ExecContext(ctx, insertProbeSample,
+		arg.ServiceID,
+		arg.MetricsKey,
+		arg.ProbedAt,
+		arg.Ok,
+		arg.LatencyMs,
+	)
+	return err
+}
+
 const insertService = `-- name: InsertService :one
 INSERT INTO services (customer_id, name, primary_cdn, backup_cdn)
 VALUES ($1, $2, $3, $4)
@@ -815,6 +927,40 @@ type MarkUsageSnapshotInvoicedParams struct {
 
 func (q *Queries) MarkUsageSnapshotInvoiced(ctx context.Context, arg MarkUsageSnapshotInvoicedParams) error {
 	_, err := q.db.ExecContext(ctx, markUsageSnapshotInvoiced, arg.InvoiceID, arg.ID)
+	return err
+}
+
+const upsertUsageSnapshot = `-- name: UpsertUsageSnapshot :exec
+INSERT INTO usage_snapshots (
+        service_id,
+        window_start,
+        window_end,
+        primary_bytes,
+        backup_bytes)
+VALUES ($1, $2, $3, $4, $5)
+ON CONFLICT (service_id, window_start, window_end)
+DO UPDATE SET
+        primary_bytes = EXCLUDED.primary_bytes,
+        backup_bytes = EXCLUDED.backup_bytes,
+        created_at = NOW()
+`
+
+type UpsertUsageSnapshotParams struct {
+	ServiceID    int64     `json:"service_id"`
+	WindowStart  time.Time `json:"window_start"`
+	WindowEnd    time.Time `json:"window_end"`
+	PrimaryBytes int64     `json:"primary_bytes"`
+	BackupBytes  int64     `json:"backup_bytes"`
+}
+
+func (q *Queries) UpsertUsageSnapshot(ctx context.Context, arg UpsertUsageSnapshotParams) error {
+	_, err := q.db.ExecContext(ctx, upsertUsageSnapshot,
+		arg.ServiceID,
+		arg.WindowStart,
+		arg.WindowEnd,
+		arg.PrimaryBytes,
+		arg.BackupBytes,
+	)
 	return err
 }
 
