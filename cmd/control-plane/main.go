@@ -27,7 +27,7 @@ func main() {
 	}
 	defer sqlDB.Close()
 
-	api := httpapi.NewServer(logger, queries)
+	api := httpapi.NewServer(logger, queries, cfg.ControlPlaneAdminToken)
 
 	srv := &http.Server{
 		Addr:              cfg.HTTPAddr,

@@ -11,6 +11,11 @@ WHERE deleted_at IS NULL
   AND customer_id = $1
 ORDER BY id;
 
+-- name: GetCustomerIDForToken :one
+SELECT customer_id
+FROM customer_tokens
+WHERE token_hash = $1
+  AND revoked_at IS NULL;
 -- name: GetUsageSnapshotForWindow :one
 SELECT id, service_id, window_start, window_end, primary_bytes, backup_bytes, created_at, invoice_id
 FROM usage_snapshots
