@@ -147,6 +147,23 @@ WHERE us.invoice_id IS NULL
   AND us.window_end > sqlc.arg(window_start)
 ORDER BY us.window_start;
 
+-- name: LockUnbilledUsageSnapshots :many
+SELECT
+    us.id,
+    us.service_id,
+    s.customer_id,
+    us.window_start,
+    us.window_end,
+    us.primary_bytes,
+    us.backup_bytes
+FROM usage_snapshots us
+JOIN services s ON s.id = us.service_id
+WHERE us.invoice_id IS NULL
+  AND us.window_end <= sqlc.arg(window_end)
+  AND us.window_end > sqlc.arg(window_start)
+ORDER BY us.window_start
+FOR UPDATE SKIP LOCKED;
+
 -- name: GetStormEventsForWindow :many
 SELECT id, service_id, kind, started_at, ended_at
 FROM storm_events

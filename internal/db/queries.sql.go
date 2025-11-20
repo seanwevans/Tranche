@@ -435,6 +435,24 @@ WHERE us.invoice_id IS NULL
 ORDER BY us.window_start
 `
 
+const lockUnbilledUsageSnapshots = `-- name: LockUnbilledUsageSnapshots :many
+SELECT
+    us.id,
+    us.service_id,
+    s.customer_id,
+    us.window_start,
+    us.window_end,
+    us.primary_bytes,
+    us.backup_bytes
+FROM usage_snapshots us
+JOIN services s ON s.id = us.service_id
+WHERE us.invoice_id IS NULL
+  AND us.window_end <= $1
+  AND us.window_end > $2
+ORDER BY us.window_start
+FOR UPDATE SKIP LOCKED
+`
+
 type GetUnbilledUsageSnapshotsParams struct {
 	WindowEnd   time.Time `json:"window_end"`
 	WindowStart time.Time `json:"window_start"`
@@ -459,6 +477,52 @@ func (q *Queries) GetUnbilledUsageSnapshots(ctx context.Context, arg GetUnbilled
 	items := []GetUnbilledUsageSnapshotsRow{}
 	for rows.Next() {
 		var i GetUnbilledUsageSnapshotsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.ServiceID,
+			&i.CustomerID,
+			&i.WindowStart,
+			&i.WindowEnd,
+			&i.PrimaryBytes,
+			&i.BackupBytes,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+type LockUnbilledUsageSnapshotsParams struct {
+	WindowEnd   time.Time `json:"window_end"`
+	WindowStart time.Time `json:"window_start"`
+}
+
+type LockUnbilledUsageSnapshotsRow struct {
+	ID           int64     `json:"id"`
+	ServiceID    int64     `json:"service_id"`
+	CustomerID   int64     `json:"customer_id"`
+	WindowStart  time.Time `json:"window_start"`
+	WindowEnd    time.Time `json:"window_end"`
+	PrimaryBytes int64     `json:"primary_bytes"`
+	BackupBytes  int64     `json:"backup_bytes"`
+}
+
+func (q *Queries) LockUnbilledUsageSnapshots(ctx context.Context, arg LockUnbilledUsageSnapshotsParams) ([]LockUnbilledUsageSnapshotsRow, error) {
+	rows, err := q.db.QueryContext(ctx, lockUnbilledUsageSnapshots, arg.WindowEnd, arg.WindowStart)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []LockUnbilledUsageSnapshotsRow{}
+	for rows.Next() {
+		var i LockUnbilledUsageSnapshotsRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.ServiceID,
