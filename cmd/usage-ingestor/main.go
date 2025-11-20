@@ -7,7 +7,8 @@ import (
 	"syscall"
 	"time"
 
-	"tranche/internal/cdn/cloudflare"
+	"tranche/internal/cdn"
+	cf "tranche/internal/cdn/cloudflare"
 	"tranche/internal/config"
 	"tranche/internal/db"
 	"tranche/internal/logging"
