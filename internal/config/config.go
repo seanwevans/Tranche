@@ -14,14 +14,21 @@ type Config struct {
 	BillingPeriod         time.Duration
 	BillingRateCentsPerGB int64
 	BillingDiscountRate   float64
+	UsageWindow           time.Duration
+	UsageLookback         time.Duration
+	UsageTick             time.Duration
 	AWSRegion             string
 	AWSAccessKey          string
 	AWSSecretKey          string
 	AWSSession            string
+	CloudflareAccountID   string
+	CloudflareAPIToken    string
 }
 
 func Load() Config {
 	cfg := Config{
+		CloudflareAccountID:   os.Getenv("CLOUDFLARE_ACCOUNT_ID"),
+		CloudflareAPIToken:    os.Getenv("CLOUDFLARE_API_TOKEN"),
 		AWSRegion:             os.Getenv("AWS_REGION"),
 		AWSAccessKey:          os.Getenv("AWS_ACCESS_KEY_ID"),
 		AWSSecretKey:          os.Getenv("AWS_SECRET_ACCESS_KEY"),
@@ -33,6 +40,9 @@ func Load() Config {
 		BillingPeriod:         durationEnv("BILLING_PERIOD", 24*time.Hour),
 		BillingRateCentsPerGB: intEnv("BILLING_RATE_CENTS_PER_GB", 12),
 		BillingDiscountRate:   floatEnv("BILLING_DISCOUNT_RATE", 0.5),
+		UsageWindow:           durationEnv("USAGE_WINDOW", time.Hour),
+		UsageLookback:         durationEnv("USAGE_LOOKBACK", 6*time.Hour),
+		UsageTick:             durationEnv("USAGE_TICK", 5*time.Minute),
 	}
 	return cfg
 }

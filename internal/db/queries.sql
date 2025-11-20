@@ -46,6 +46,11 @@ FROM service_domains
 WHERE service_id = $1
 ORDER BY id;
 
+-- name: GetAllServiceDomains :many
+SELECT *
+FROM service_domains
+ORDER BY service_id, id;
+
 -- name: InsertServiceDomain :one
 INSERT INTO service_domains (service_id, name)
 VALUES ($1, $2)
@@ -200,3 +205,17 @@ RETURNING id, invoice_id, service_id, window_start, window_end, primary_bytes, b
 UPDATE usage_snapshots
 SET invoice_id = $1
 WHERE id = $2;
+
+-- name: UpsertUsageSnapshot :exec
+INSERT INTO usage_snapshots (
+        service_id,
+        window_start,
+        window_end,
+        primary_bytes,
+        backup_bytes)
+VALUES ($1, $2, $3, $4, $5)
+ON CONFLICT (service_id, window_start, window_end)
+DO UPDATE SET
+        primary_bytes = EXCLUDED.primary_bytes,
+        backup_bytes = EXCLUDED.backup_bytes,
+        created_at = NOW();

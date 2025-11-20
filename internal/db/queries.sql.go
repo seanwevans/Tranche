@@ -279,6 +279,40 @@ func (q *Queries) GetServiceDomains(ctx context.Context, serviceID int64) ([]Ser
 	return items, nil
 }
 
+const getAllServiceDomains = `-- name: GetAllServiceDomains :many
+SELECT id, service_id, name, created_at
+FROM service_domains
+ORDER BY service_id, id
+`
+
+func (q *Queries) GetAllServiceDomains(ctx context.Context) ([]ServiceDomain, error) {
+	rows, err := q.db.QueryContext(ctx, getAllServiceDomains)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ServiceDomain{}
+	for rows.Next() {
+		var i ServiceDomain
+		if err := rows.Scan(
+			&i.ID,
+			&i.ServiceID,
+			&i.Name,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getServiceForCustomer = `-- name: GetServiceForCustomer :one
 SELECT id, customer_id, name, primary_cdn, backup_cdn, created_at, deleted_at
 FROM services
@@ -801,6 +835,40 @@ type MarkUsageSnapshotInvoicedParams struct {
 
 func (q *Queries) MarkUsageSnapshotInvoiced(ctx context.Context, arg MarkUsageSnapshotInvoicedParams) error {
 	_, err := q.db.ExecContext(ctx, markUsageSnapshotInvoiced, arg.InvoiceID, arg.ID)
+	return err
+}
+
+const upsertUsageSnapshot = `-- name: UpsertUsageSnapshot :exec
+INSERT INTO usage_snapshots (
+        service_id,
+        window_start,
+        window_end,
+        primary_bytes,
+        backup_bytes)
+VALUES ($1, $2, $3, $4, $5)
+ON CONFLICT (service_id, window_start, window_end)
+DO UPDATE SET
+        primary_bytes = EXCLUDED.primary_bytes,
+        backup_bytes = EXCLUDED.backup_bytes,
+        created_at = NOW()
+`
+
+type UpsertUsageSnapshotParams struct {
+	ServiceID    int64     `json:"service_id"`
+	WindowStart  time.Time `json:"window_start"`
+	WindowEnd    time.Time `json:"window_end"`
+	PrimaryBytes int64     `json:"primary_bytes"`
+	BackupBytes  int64     `json:"backup_bytes"`
+}
+
+func (q *Queries) UpsertUsageSnapshot(ctx context.Context, arg UpsertUsageSnapshotParams) error {
+	_, err := q.db.ExecContext(ctx, upsertUsageSnapshot,
+		arg.ServiceID,
+		arg.WindowStart,
+		arg.WindowEnd,
+		arg.PrimaryBytes,
+		arg.BackupBytes,
+	)
 	return err
 }
 
