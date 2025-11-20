@@ -431,7 +431,7 @@ FROM usage_snapshots us
 JOIN services s ON s.id = us.service_id
 WHERE us.invoice_id IS NULL
   AND us.window_end <= $1
-  AND us.window_end > $2
+  AND us.window_end >= $2
 ORDER BY us.window_start
 `
 
