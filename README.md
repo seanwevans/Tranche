@@ -189,6 +189,8 @@ Environment knobs (override via env vars) let you tune the worker without code c
 
 Usage ingestion is intentionally decoupled from billing – populate `usage_snapshots` from CDN logs or metering pipelines, then let the worker mint invoices in the same database transaction that tags the snapshots as billed.
 
+`cmd/usage-ingestor` now polls Cloudflare hourly analytics windows (defaults: 1h window, 6h lookback) and upserts rows into `usage_snapshots` without double-inserting. Configure it with `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_API_TOKEN`, and window knobs (`USAGE_WINDOW`, `USAGE_LOOKBACK`, `USAGE_TICK`).
+
 ## Notes
 
 - `internal/db/queries.go` is a **placeholder** so the skeleton builds. Run `sqlc generate` to replace it.
