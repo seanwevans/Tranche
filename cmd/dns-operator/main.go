@@ -42,26 +42,34 @@ func main() {
 	}
 
 	reconcile := func() {
-		services, err := queries.GetActiveServices(ctx)
+		servicesCtx, servicesCancel := context.WithTimeout(ctx, 5*time.Second)
+		services, err := queries.GetActiveServices(servicesCtx)
+		servicesCancel()
 		if err != nil {
 			logger.Printf("GetActiveServices: %v", err)
 			return
 		}
 		for _, s := range services {
-			weights, err := planner.DesiredRouting(ctx, s.ID)
+			weightsCtx, weightsCancel := context.WithTimeout(ctx, 5*time.Second)
+			weights, err := planner.DesiredRouting(weightsCtx, s.ID)
+			weightsCancel()
 			if err != nil {
 				logger.Printf("DesiredRouting(service=%d): %v", s.ID, err)
 				continue
 			}
-			domains, err := queries.GetServiceDomains(ctx, s.ID)
+			domainsCtx, domainsCancel := context.WithTimeout(ctx, 5*time.Second)
+			domains, err := queries.GetServiceDomains(domainsCtx, s.ID)
+			domainsCancel()
 			if err != nil {
 				logger.Printf("GetServiceDomains(service=%d): %v", s.ID, err)
 				continue
 			}
 			for _, dom := range domains {
-				if err := dnsProv.SetWeights(ctx, dom.Name, weights.Primary, weights.Backup); err != nil {
+				setWeightsCtx, setWeightsCancel := context.WithTimeout(ctx, 5*time.Second)
+				if err := dnsProv.SetWeights(setWeightsCtx, dom.Name, weights.Primary, weights.Backup); err != nil {
 					logger.Printf("SetWeights(%s): %v", dom.Name, err)
 				}
+				setWeightsCancel()
 			}
 		}
 	}
@@ -78,26 +86,34 @@ func main() {
 			_ = sqlDB.Close()
 			return
 		case <-ticker.C:
-			services, err := queries.GetActiveServices(ctx)
+			servicesCtx, servicesCancel := context.WithTimeout(ctx, 5*time.Second)
+			services, err := queries.GetActiveServices(servicesCtx)
+			servicesCancel()
 			if err != nil {
 				logger.Printf("GetActiveServices: %v", err)
 				continue
 			}
 			for _, s := range services {
-				weights, err := planner.DesiredRouting(ctx, s.ID)
+				weightsCtx, weightsCancel := context.WithTimeout(ctx, 5*time.Second)
+				weights, err := planner.DesiredRouting(weightsCtx, s.ID)
+				weightsCancel()
 				if err != nil {
 					logger.Printf("DesiredRouting(service=%d): %v", s.ID, err)
 					continue
 				}
-				domains, err := queries.GetServiceDomains(ctx, s.ID)
+				domainsCtx, domainsCancel := context.WithTimeout(ctx, 5*time.Second)
+				domains, err := queries.GetServiceDomains(domainsCtx, s.ID)
+				domainsCancel()
 				if err != nil {
 					logger.Printf("GetServiceDomains(service=%d): %v", s.ID, err)
 					continue
 				}
 				for _, dom := range domains {
-					if err := dnsProv.SetWeights(ctx, dom.Name, weights.Primary, weights.Backup); err != nil {
+					setWeightsCtx, setWeightsCancel := context.WithTimeout(ctx, 5*time.Second)
+					if err := dnsProv.SetWeights(setWeightsCtx, dom.Name, weights.Primary, weights.Backup); err != nil {
 						logger.Printf("SetWeights(%s): %v", dom.Name, err)
 					}
+					setWeightsCancel()
 				}
 			}
 		}
