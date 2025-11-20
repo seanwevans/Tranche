@@ -26,6 +26,8 @@ type Provider struct {
 	logger cdn.Logger
 }
 
+var _ cdn.UsageProvider = (*Provider)(nil)
+
 func NewProvider(cfg config.CloudflareConfig, logger cdn.Logger) (*Provider, error) {
 	if cfg.APIToken == "" {
 		return nil, fmt.Errorf("cloudflare api token missing")

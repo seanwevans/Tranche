@@ -12,6 +12,7 @@ import (
 	"tranche/internal/db"
 	"tranche/internal/httpapi"
 	"tranche/internal/logging"
+	"tranche/internal/observability"
 )
 
 func main() {
@@ -19,7 +20,7 @@ func main() {
 	defer cancel()
 
 	cfg := config.Load()
-	logger := logging.New()
+	logger := logging.New("control-plane")
 
 	sqlDB, queries, err := db.Open(ctx, cfg.PGDSN)
 	if err != nil {
@@ -27,7 +28,12 @@ func main() {
 	}
 	defer sqlDB.Close()
 
-	api := httpapi.NewServer(logger, queries, cfg.ControlPlaneAdminToken)
+	metrics := observability.NewMetrics("control-plane")
+	observability.Start(ctx, cfg.MetricsAddr, logger, metrics.Registry, func(c context.Context) error {
+		return db.Ready(c, sqlDB)
+	})
+
+	api := httpapi.NewServer(logger, sqlDB, queries, cfg.ControlPlaneAdminToken)
 
 	srv := &http.Server{
 		Addr:              cfg.HTTPAddr,

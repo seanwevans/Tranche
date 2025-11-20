@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"tranche/internal/db"
+	"tranche/internal/observability"
 )
 
 type Logger interface {
@@ -25,13 +26,14 @@ type Engine struct {
 	db  *db.Queries
 	log Logger
 	cfg Config
+	m   *observability.Metrics
 }
 
 type coverageQuerier interface {
 	GetMaxCoverageFactorForService(context.Context, int64) (float64, error)
 }
 
-func NewEngine(dbx *db.Queries, log Logger, cfg Config) *Engine {
+func NewEngine(dbx *db.Queries, log Logger, m *observability.Metrics, cfg Config) *Engine {
 	if cfg.Period <= 0 {
 		cfg.Period = 24 * time.Hour
 	}
@@ -41,7 +43,7 @@ func NewEngine(dbx *db.Queries, log Logger, cfg Config) *Engine {
 	if cfg.DiscountRate < 0 {
 		cfg.DiscountRate = 0
 	}
-	return &Engine{db: dbx, log: log, cfg: cfg}
+	return &Engine{db: dbx, log: log, cfg: cfg, m: m}
 }
 
 func (e *Engine) RunOnce(ctx context.Context, now time.Time) error {
@@ -176,6 +178,10 @@ func (e *Engine) RunOnce(ctx context.Context, now time.Time) error {
 
 	for _, msg := range logs {
 		e.log.Printf(msg)
+	}
+
+	if e.m != nil {
+		e.m.RecordBillingRun(time.Since(now), len(invoices), nil)
 	}
 
 	return nil

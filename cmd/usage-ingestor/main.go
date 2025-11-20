@@ -2,16 +2,15 @@ package main
 
 import (
 	"context"
-	"log"
 	"os/signal"
 	"syscall"
 	"time"
 
-	"tranche/internal/cdn"
 	cf "tranche/internal/cdn/cloudflare"
 	"tranche/internal/config"
 	"tranche/internal/db"
 	"tranche/internal/logging"
+	"tranche/internal/observability"
 	"tranche/internal/usageingestor"
 )
 
@@ -19,9 +18,9 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 	cfg := config.Load()
-	logger := logging.New()
+	logger := logging.New("usage-ingestor")
 
-	provider := cloudflare.NewClient(cfg.CloudflareAccountID, cfg.CloudflareAPIToken)
+	provider := cf.NewClient(cfg.CloudflareAccountID, cfg.CloudflareAPIToken)
 	if cfg.CloudflareAccountID == "" || cfg.CloudflareAPIToken == "" {
 		logger.Fatal("CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN must be set")
 	}
@@ -31,6 +30,11 @@ func main() {
 		logger.Fatalf("opening db: %v", err)
 	}
 	defer sqlDB.Close()
+
+	metrics := observability.NewMetrics("usage-ingestor")
+	observability.Start(ctx, cfg.MetricsAddr, logger, metrics.Registry, func(c context.Context) error {
+		return db.Ready(c, sqlDB)
+	})
 
 	engine := usageingestor.NewEngine(queries, provider, logger, cfg.UsageWindow, cfg.UsageLookback)
 
@@ -44,7 +48,7 @@ func main() {
 			return
 		case <-ticker.C:
 			if err := engine.RunOnce(ctx, time.Now()); err != nil {
-				log.Printf("usage ingestion error: %v", err)
+				logger.Error("usage ingestion error", "error", err)
 			}
 		}
 	}

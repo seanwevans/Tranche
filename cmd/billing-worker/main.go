@@ -10,13 +10,14 @@ import (
 	"tranche/internal/config"
 	"tranche/internal/db"
 	"tranche/internal/logging"
+	"tranche/internal/observability"
 )
 
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 	cfg := config.Load()
-	logger := logging.New()
+	logger := logging.New("billing-worker")
 
 	sqlDB, queries, err := db.Open(ctx, cfg.PGDSN)
 	if err != nil {
@@ -24,7 +25,12 @@ func main() {
 	}
 	defer sqlDB.Close()
 
-	engine := billing.NewEngine(queries, logger, billing.Config{
+	metrics := observability.NewMetrics("billing")
+	observability.Start(ctx, cfg.MetricsAddr, logger, metrics.Registry, func(c context.Context) error {
+		return db.Ready(c, sqlDB)
+	})
+
+	engine := billing.NewEngine(queries, logger, metrics, billing.Config{
 		Period:         cfg.BillingPeriod,
 		RateCentsPerGB: cfg.BillingRateCentsPerGB,
 		DiscountRate:   cfg.BillingDiscountRate,
@@ -38,8 +44,10 @@ func main() {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			if err := engine.RunOnce(ctx, time.Now()); err != nil {
-				logger.Printf("billing run error: %v", err)
+			start := time.Now()
+			if err := engine.RunOnce(ctx, start); err != nil {
+				metrics.RecordBillingRun(time.Since(start), 0, err)
+				logger.Error("billing run error", "error", err)
 			}
 		}
 	}

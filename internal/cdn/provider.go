@@ -8,9 +8,9 @@ import (
 	"tranche/internal/db"
 )
 
-// Provider exposes CDN-specific primitives such as usage gathering.
+// UsageProvider exposes CDN-specific primitives such as usage gathering.
 // Implementations should be stateless and safe for concurrent use.
-type Provider interface {
+type UsageProvider interface {
 	Name() string
 	FetchUsage(ctx context.Context, svc db.Service, since, until time.Time) (primaryBytes, backupBytes int64, err error)
 }
@@ -23,18 +23,18 @@ type SelectorConfig struct {
 	DefaultProvider   string
 	CustomerOverrides map[int64]string
 	ServiceOverrides  map[int64]string
-	Providers         []Provider
+	Providers         []UsageProvider
 }
 
 type Selector struct {
-	providers         map[string]Provider
+	providers         map[string]UsageProvider
 	defaultProvider   string
 	customerOverrides map[int64]string
 	serviceOverrides  map[int64]string
 }
 
 func NewSelector(cfg SelectorConfig) (*Selector, error) {
-	providers := make(map[string]Provider)
+	providers := make(map[string]UsageProvider)
 	for _, p := range cfg.Providers {
 		if p == nil {
 			continue
@@ -54,7 +54,7 @@ func NewSelector(cfg SelectorConfig) (*Selector, error) {
 	}, nil
 }
 
-func (s *Selector) ProviderForService(svc db.Service) (Provider, error) {
+func (s *Selector) ProviderForService(svc db.Service) (UsageProvider, error) {
 	name := svc.PrimaryCdn
 	if override, ok := s.customerOverrides[svc.CustomerID]; ok {
 		name = override

@@ -3,23 +3,23 @@ package usageingestor
 import (
 	"context"
 	"fmt"
-	"log"
 	"time"
 
 	"tranche/internal/cdn"
 	"tranche/internal/db"
+	"tranche/internal/logging"
 )
 
 type Engine struct {
 	queries  *db.Queries
 	provider cdn.Provider
-	logger   *log.Logger
+	logger   *logging.Logger
 
 	window   time.Duration
 	lookback time.Duration
 }
 
-func NewEngine(queries *db.Queries, provider cdn.Provider, logger *log.Logger, window, lookback time.Duration) *Engine {
+func NewEngine(queries *db.Queries, provider cdn.Provider, logger *logging.Logger, window, lookback time.Duration) *Engine {
 	return &Engine{
 		queries:  queries,
 		provider: provider,
