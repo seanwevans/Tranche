@@ -19,7 +19,7 @@ type stormStore interface {
 }
 
 type MetricsView interface {
-	Availability(serviceID int64, window time.Duration) (float64, error)
+	Availability(ctx context.Context, serviceID int64, window time.Duration) (float64, error)
 }
 
 type Logger interface {
@@ -59,7 +59,7 @@ func (e *Engine) Tick(ctx context.Context) error {
 
 func (e *Engine) evaluatePolicy(ctx context.Context, serviceID int64, p db.StormPolicy) error {
 	window := time.Duration(p.WindowSeconds) * time.Second
-	avail, err := e.mv.Availability(serviceID, window)
+	avail, err := e.mv.Availability(ctx, serviceID, window)
 	if err != nil {
 		return err
 	}

@@ -200,3 +200,17 @@ RETURNING id, invoice_id, service_id, window_start, window_end, primary_bytes, b
 UPDATE usage_snapshots
 SET invoice_id = $1
 WHERE id = $2;
+
+-- name: InsertProbeSample :exec
+INSERT INTO probe_samples (service_id, metrics_key, probed_at, ok, latency_ms)
+VALUES ($1, $2, $3, $4, $5);
+
+-- name: GetProbeAvailability :one
+SELECT
+    COALESCE(
+        AVG(CASE WHEN ok THEN 1 ELSE 0 END)::double precision,
+        sqlc.arg(empty_availability)::double precision
+    ) AS availability
+FROM probe_samples
+WHERE service_id = sqlc.arg(service_id)
+  AND probed_at >= sqlc.arg(cutoff);

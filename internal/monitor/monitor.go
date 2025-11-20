@@ -18,19 +18,7 @@ type Logger interface {
 }
 
 type MetricsRecorder interface {
-	RecordProbe(serviceID int64, target string, ok bool, latency time.Duration)
-}
-
-type MetricsView struct {
-	rec *InMemoryMetrics
-}
-
-func NewMetricsView(rec *InMemoryMetrics) *MetricsView {
-	return &MetricsView{rec: rec}
-}
-
-func (mv *MetricsView) Availability(serviceID int64, window time.Duration) (float64, error) {
-	return mv.rec.Availability(serviceID, window), nil
+	RecordProbe(ctx context.Context, serviceID int64, target string, ok bool, latency time.Duration) error
 }
 
 type ProbeConfig struct {
@@ -147,7 +135,9 @@ func (s *Scheduler) probeLoop(ctx context.Context, client *http.Client, target p
 			s.log.Printf("probe target=%s: %v", target.metricsKey, err)
 		}
 		lat := time.Since(start)
-		s.m.RecordProbe(target.serviceID, target.metricsKey, ok, lat)
+		if err := s.m.RecordProbe(ctx, target.serviceID, target.metricsKey, ok, lat); err != nil {
+			s.log.Printf("record probe target=%s: %v", target.metricsKey, err)
+		}
 
 		select {
 		case <-ctx.Done():
