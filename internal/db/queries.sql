@@ -11,6 +11,13 @@ WHERE deleted_at IS NULL
   AND customer_id = $1
 ORDER BY id;
 
+-- name: GetUsageSnapshotForWindow :one
+SELECT id, service_id, window_start, window_end, primary_bytes, backup_bytes, created_at, invoice_id
+FROM usage_snapshots
+WHERE service_id = $1
+  AND window_start = $2
+  AND window_end = $3;
+
 -- name: GetServiceForCustomer :one
 SELECT *
 FROM services
@@ -45,6 +52,11 @@ SELECT *
 FROM service_domains
 WHERE service_id = $1
 ORDER BY id;
+
+-- name: GetAllServiceDomains :many
+SELECT *
+FROM service_domains
+ORDER BY service_id, id;
 
 -- name: InsertServiceDomain :one
 INSERT INTO service_domains (service_id, name)
@@ -214,3 +226,16 @@ SELECT
 FROM probe_samples
 WHERE service_id = sqlc.arg(service_id)
   AND probed_at >= sqlc.arg(cutoff);
+-- name: UpsertUsageSnapshot :exec
+INSERT INTO usage_snapshots (
+        service_id,
+        window_start,
+        window_end,
+        primary_bytes,
+        backup_bytes)
+VALUES ($1, $2, $3, $4, $5)
+ON CONFLICT (service_id, window_start, window_end)
+DO UPDATE SET
+        primary_bytes = EXCLUDED.primary_bytes,
+        backup_bytes = EXCLUDED.backup_bytes,
+        created_at = NOW();
