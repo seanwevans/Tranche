@@ -1,7 +1,10 @@
 package httpapi
 
 import (
+	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
@@ -16,9 +19,17 @@ import (
 )
 
 type Server struct {
-	log Logger
-	db  *db.Queries
-	r   chi.Router
+	log        Logger
+	db         *db.Queries
+	r          chi.Router
+	adminToken string
+}
+
+type authContextKey struct{}
+
+type authContext struct {
+	customerID int64
+	superuser  bool
 }
 
 const maxRequestBodyBytes int64 = 1 << 20 // 1 MiB
@@ -29,8 +40,8 @@ type Logger interface {
 	Fatalf(string, ...any)
 }
 
-func NewServer(log Logger, dbx *db.Queries) *Server {
-	s := &Server{log: log, db: dbx, r: chi.NewRouter()}
+func NewServer(log Logger, dbx *db.Queries, adminToken string) *Server {
+	s := &Server{log: log, db: dbx, r: chi.NewRouter(), adminToken: strings.TrimSpace(adminToken)}
 	s.routes()
 	return s
 }
@@ -39,29 +50,134 @@ func (s *Server) Router() http.Handler { return s.r }
 
 func (s *Server) routes() {
 	s.r.Get("/healthz", s.handleHealth)
-	s.r.Route("/v1/services", func(r chi.Router) {
-		r.Get("/", s.handleListServices)
-		r.Post("/", s.handleCreateService)
+	s.r.Route("/v1", func(r chi.Router) {
+		r.Use(s.authMiddleware)
+		r.Route("/services", func(r chi.Router) {
+			r.Get("/", s.handleListServices)
+			r.Post("/", s.handleCreateService)
 
-		r.Route("/{serviceID}", func(r chi.Router) {
-			r.Get("/", s.handleGetService)
-			r.Patch("/", s.handleUpdateService)
-			r.Delete("/", s.handleDeleteService)
+			r.Route("/{serviceID}", func(r chi.Router) {
+				r.Get("/", s.handleGetService)
+				r.Patch("/", s.handleUpdateService)
+				r.Delete("/", s.handleDeleteService)
 
-			r.Route("/domains", func(r chi.Router) {
-				r.Get("/", s.handleListDomains)
-				r.Post("/", s.handleCreateDomain)
-				r.Delete("/{domainID}", s.handleDeleteDomain)
-			})
+				r.Route("/domains", func(r chi.Router) {
+					r.Get("/", s.handleListDomains)
+					r.Post("/", s.handleCreateDomain)
+					r.Delete("/{domainID}", s.handleDeleteDomain)
+				})
 
-			r.Route("/storm-policies", func(r chi.Router) {
-				r.Get("/", s.handleListStormPolicies)
-				r.Post("/", s.handleCreateStormPolicy)
-				r.Patch("/{policyID}", s.handleUpdateStormPolicy)
-				r.Delete("/{policyID}", s.handleDeleteStormPolicy)
+				r.Route("/storm-policies", func(r chi.Router) {
+					r.Get("/", s.handleListStormPolicies)
+					r.Post("/", s.handleCreateStormPolicy)
+					r.Patch("/{policyID}", s.handleUpdateStormPolicy)
+					r.Delete("/{policyID}", s.handleDeleteStormPolicy)
+				})
 			})
 		})
 	})
+}
+
+var (
+	errUnauthenticated      = errors.New("authentication required")
+	errCustomerScopeMissing = errors.New("customer scope required")
+)
+
+func (s *Server) authMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		token := strings.TrimSpace(r.Header.Get("Authorization"))
+		if strings.HasPrefix(strings.ToLower(token), "bearer ") {
+			token = strings.TrimSpace(token[7:])
+		}
+		if token == "" {
+			token = strings.TrimSpace(r.Header.Get("X-API-Key"))
+		}
+		if token == "" {
+			writeError(w, http.StatusUnauthorized, "missing API token", nil)
+			return
+		}
+
+		if s.adminToken != "" && token == s.adminToken {
+			customerID, err := s.extractCustomerID(r)
+			if err != nil {
+				if errors.Is(err, errCustomerScopeMissing) {
+					writeError(w, http.StatusBadRequest, "customer_id is required for admin requests", nil)
+					return
+				}
+				writeError(w, http.StatusBadRequest, err.Error(), nil)
+				return
+			}
+			ctx := context.WithValue(r.Context(), authContextKey{}, authContext{customerID: customerID, superuser: true})
+			next.ServeHTTP(w, r.WithContext(ctx))
+			return
+		}
+
+		hash := hashToken(token)
+		customerID, err := s.db.GetCustomerIDForToken(r.Context(), hash)
+		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				writeError(w, http.StatusUnauthorized, "invalid API token", nil)
+				return
+			}
+			s.log.Printf("GetCustomerIDForToken: %v", err)
+			writeError(w, http.StatusInternalServerError, "authentication failed", nil)
+			return
+		}
+
+		ctx := context.WithValue(r.Context(), authContextKey{}, authContext{customerID: customerID})
+		next.ServeHTTP(w, r.WithContext(ctx))
+	})
+}
+
+func hashToken(token string) string {
+	sum := sha256.Sum256([]byte(token))
+	return hex.EncodeToString(sum[:])
+}
+
+func (s *Server) extractCustomerID(r *http.Request) (int64, error) {
+	header := strings.TrimSpace(r.Header.Get("X-Customer-ID"))
+	if header == "" {
+		header = strings.TrimSpace(r.URL.Query().Get("customer_id"))
+	}
+	if header == "" {
+		return 0, errCustomerScopeMissing
+	}
+	id, err := strconv.ParseInt(header, 10, 64)
+	if err != nil || id <= 0 {
+		return 0, errors.New("invalid customer_id")
+	}
+	return id, nil
+}
+
+func (s *Server) customerIDFromContext(ctx context.Context) (int64, error) {
+	val := ctx.Value(authContextKey{})
+	if val == nil {
+		return 0, errUnauthenticated
+	}
+	info, ok := val.(authContext)
+	if !ok {
+		return 0, errUnauthenticated
+	}
+	if info.customerID == 0 {
+		return 0, errCustomerScopeMissing
+	}
+	return info.customerID, nil
+}
+
+func (s *Server) requireCustomerID(w http.ResponseWriter, r *http.Request) (int64, bool) {
+	customerID, err := s.customerIDFromContext(r.Context())
+	if err != nil {
+		switch {
+		case errors.Is(err, errUnauthenticated):
+			writeError(w, http.StatusUnauthorized, err.Error(), nil)
+		case errors.Is(err, errCustomerScopeMissing):
+			writeError(w, http.StatusBadRequest, err.Error(), nil)
+		default:
+			writeError(w, http.StatusInternalServerError, "failed to read auth context", nil)
+		}
+		return 0, false
+	}
+	return customerID, true
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
@@ -71,9 +187,8 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleListServices(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	customerID, err := s.customerIDFromRequest(r)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error(), nil)
+	customerID, ok := s.requireCustomerID(w, r)
+	if !ok {
 		return
 	}
 	services, err := s.db.GetActiveServicesForCustomer(ctx, customerID)
@@ -87,9 +202,8 @@ func (s *Server) handleListServices(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleCreateService(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	customerID, err := s.customerIDFromRequest(r)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error(), nil)
+	customerID, ok := s.requireCustomerID(w, r)
+	if !ok {
 		return
 	}
 	var req createServiceRequest
@@ -122,9 +236,8 @@ func (s *Server) handleGetService(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error(), nil)
 		return
 	}
-	customerID, err := s.customerIDFromRequest(r)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error(), nil)
+	customerID, ok := s.requireCustomerID(w, r)
+	if !ok {
 		return
 	}
 	svc, err := s.db.GetServiceForCustomer(ctx, db.GetServiceForCustomerParams{ID: serviceID, CustomerID: customerID})
@@ -163,9 +276,8 @@ func (s *Server) handleUpdateService(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error(), nil)
 		return
 	}
-	customerID, err := s.customerIDFromRequest(r)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error(), nil)
+	customerID, ok := s.requireCustomerID(w, r)
+	if !ok {
 		return
 	}
 	svc, err := s.db.GetServiceForCustomer(ctx, db.GetServiceForCustomerParams{ID: serviceID, CustomerID: customerID})
@@ -210,9 +322,8 @@ func (s *Server) handleDeleteService(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error(), nil)
 		return
 	}
-	customerID, err := s.customerIDFromRequest(r)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error(), nil)
+	customerID, ok := s.requireCustomerID(w, r)
+	if !ok {
 		return
 	}
 	_, err = s.db.SoftDeleteService(ctx, db.SoftDeleteServiceParams{ID: serviceID, CustomerID: customerID})
@@ -399,9 +510,8 @@ func (s *Server) requireServiceContext(w http.ResponseWriter, r *http.Request) (
 		writeError(w, http.StatusBadRequest, err.Error(), nil)
 		return db.Service{}, false
 	}
-	customerID, err := s.customerIDFromRequest(r)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error(), nil)
+	customerID, ok := s.requireCustomerID(w, r)
+	if !ok {
 		return db.Service{}, false
 	}
 	svc, err := s.db.GetServiceForCustomer(ctx, db.GetServiceForCustomerParams{ID: serviceID, CustomerID: customerID})
@@ -415,21 +525,6 @@ func (s *Server) requireServiceContext(w http.ResponseWriter, r *http.Request) (
 		return db.Service{}, false
 	}
 	return svc, true
-}
-
-func (s *Server) customerIDFromRequest(r *http.Request) (int64, error) {
-	header := strings.TrimSpace(r.Header.Get("X-Customer-ID"))
-	if header == "" {
-		header = strings.TrimSpace(r.URL.Query().Get("customer_id"))
-	}
-	if header == "" {
-		return 0, errors.New("missing customer_id (use X-Customer-ID header or customer_id query param)")
-	}
-	id, err := strconv.ParseInt(header, 10, 64)
-	if err != nil || id <= 0 {
-		return 0, errors.New("invalid customer_id")
-	}
-	return id, nil
 }
 
 func parseIDParam(raw string) (int64, error) {

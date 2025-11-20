@@ -7,32 +7,34 @@ import (
 )
 
 type Config struct {
-	PGDSN                 string
-	HTTPAddr              string
-	ProbePath             string
-	ProbeTimeout          time.Duration
-	BillingPeriod         time.Duration
-	BillingRateCentsPerGB int64
-	BillingDiscountRate   float64
-	AWSRegion             string
-	AWSAccessKey          string
-	AWSSecretKey          string
-	AWSSession            string
+	PGDSN                  string
+	HTTPAddr               string
+	ProbePath              string
+	ProbeTimeout           time.Duration
+	BillingPeriod          time.Duration
+	BillingRateCentsPerGB  int64
+	BillingDiscountRate    float64
+	AWSRegion              string
+	AWSAccessKey           string
+	AWSSecretKey           string
+	AWSSession             string
+	ControlPlaneAdminToken string
 }
 
 func Load() Config {
 	cfg := Config{
-		AWSRegion:             os.Getenv("AWS_REGION"),
-		AWSAccessKey:          os.Getenv("AWS_ACCESS_KEY_ID"),
-		AWSSecretKey:          os.Getenv("AWS_SECRET_ACCESS_KEY"),
-		AWSSession:            os.Getenv("AWS_SESSION_TOKEN"),
-		PGDSN:                 getenv("PG_DSN", "postgres://user:pass@localhost:5432/tranche?sslmode=disable"),
-		HTTPAddr:              getenv("HTTP_ADDR", ":8080"),
-		ProbePath:             getenv("PROBE_PATH", "/healthz"),
-		ProbeTimeout:          durationEnv("PROBE_TIMEOUT", 5*time.Second),
-		BillingPeriod:         durationEnv("BILLING_PERIOD", 24*time.Hour),
-		BillingRateCentsPerGB: intEnv("BILLING_RATE_CENTS_PER_GB", 12),
-		BillingDiscountRate:   floatEnv("BILLING_DISCOUNT_RATE", 0.5),
+		AWSRegion:              os.Getenv("AWS_REGION"),
+		AWSAccessKey:           os.Getenv("AWS_ACCESS_KEY_ID"),
+		AWSSecretKey:           os.Getenv("AWS_SECRET_ACCESS_KEY"),
+		AWSSession:             os.Getenv("AWS_SESSION_TOKEN"),
+		PGDSN:                  getenv("PG_DSN", "postgres://user:pass@localhost:5432/tranche?sslmode=disable"),
+		HTTPAddr:               getenv("HTTP_ADDR", ":8080"),
+		ProbePath:              getenv("PROBE_PATH", "/healthz"),
+		ProbeTimeout:           durationEnv("PROBE_TIMEOUT", 5*time.Second),
+		BillingPeriod:          durationEnv("BILLING_PERIOD", 24*time.Hour),
+		BillingRateCentsPerGB:  intEnv("BILLING_RATE_CENTS_PER_GB", 12),
+		BillingDiscountRate:    floatEnv("BILLING_DISCOUNT_RATE", 0.5),
+		ControlPlaneAdminToken: os.Getenv("CONTROL_PLANE_ADMIN_TOKEN"),
 	}
 	return cfg
 }

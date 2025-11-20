@@ -11,6 +11,12 @@ WHERE deleted_at IS NULL
   AND customer_id = $1
 ORDER BY id;
 
+-- name: GetCustomerIDForToken :one
+SELECT customer_id
+FROM customer_tokens
+WHERE token_hash = $1
+  AND revoked_at IS NULL;
+
 -- name: GetServiceForCustomer :one
 SELECT *
 FROM services
