@@ -22,19 +22,25 @@ type MetricsView interface {
 	Availability(serviceID int64, window time.Duration) (float64, error)
 }
 
+type Metrics interface {
+	RecordStormEvent(serviceID int64, kind, status string, active bool)
+	SetStormActive(serviceID int64, kind string, active bool)
+}
+
 type Logger interface {
 	Printf(string, ...any)
 }
 
 type Engine struct {
-	db  stormStore
-	mv  MetricsView
-	log Logger
-	now func() time.Time
+	db      stormStore
+	mv      MetricsView
+	metrics Metrics
+	log     Logger
+	now     func() time.Time
 }
 
-func NewEngine(dbx stormStore, mv MetricsView, log Logger) *Engine {
-	return &Engine{db: dbx, mv: mv, log: log, now: time.Now}
+func NewEngine(dbx stormStore, mv MetricsView, metrics Metrics, log Logger) *Engine {
+	return &Engine{db: dbx, mv: mv, metrics: metrics, log: log, now: time.Now}
 }
 
 func (e *Engine) Tick(ctx context.Context) error {
@@ -69,6 +75,7 @@ func (e *Engine) evaluatePolicy(ctx context.Context, serviceID int64, p db.Storm
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return err
 	}
+	e.setActiveMetric(serviceID, p.Kind, hasActive)
 
 	now := e.now()
 	cooldown := time.Duration(p.CooldownSeconds) * time.Second
@@ -93,13 +100,34 @@ func (e *Engine) evaluatePolicy(ctx context.Context, serviceID int64, p db.Storm
 		}
 
 		_, err = e.db.InsertStormEvent(ctx, db.InsertStormEventParams{ServiceID: serviceID, Kind: p.Kind})
+		if err == nil {
+			e.recordEvent(serviceID, p.Kind, "started", true)
+		}
 		return err
 	}
 
 	if hasActive {
 		_, err = e.db.MarkStormEventResolved(ctx, db.MarkStormEventResolvedParams{ID: activeStorm.ID, EndedAt: sql.NullTime{Time: now, Valid: true}})
+		if err == nil {
+			e.recordEvent(serviceID, p.Kind, "resolved", false)
+		}
 		return err
 	}
 
+	e.setActiveMetric(serviceID, p.Kind, false)
 	return nil
+}
+
+func (e *Engine) recordEvent(serviceID int64, kind, status string, active bool) {
+	if e.metrics == nil {
+		return
+	}
+	e.metrics.RecordStormEvent(serviceID, kind, status, active)
+}
+
+func (e *Engine) setActiveMetric(serviceID int64, kind string, active bool) {
+	if e.metrics == nil {
+		return
+	}
+	e.metrics.SetStormActive(serviceID, kind, active)
 }

@@ -15,6 +15,10 @@ type Logger interface {
 	Printf(string, ...any)
 }
 
+type Metrics interface {
+	ObserveBillingRun(duration time.Duration, invoices int, err error)
+}
+
 type Config struct {
 	Period         time.Duration
 	RateCentsPerGB int64
@@ -22,16 +26,17 @@ type Config struct {
 }
 
 type Engine struct {
-	db  *db.Queries
-	log Logger
-	cfg Config
+	db      *db.Queries
+	log     Logger
+	cfg     Config
+	metrics Metrics
 }
 
 type coverageQuerier interface {
 	GetMaxCoverageFactorForService(context.Context, int64) (float64, error)
 }
 
-func NewEngine(dbx *db.Queries, log Logger, cfg Config) *Engine {
+func NewEngine(dbx *db.Queries, log Logger, cfg Config, metrics Metrics) *Engine {
 	if cfg.Period <= 0 {
 		cfg.Period = 24 * time.Hour
 	}
@@ -41,11 +46,18 @@ func NewEngine(dbx *db.Queries, log Logger, cfg Config) *Engine {
 	if cfg.DiscountRate < 0 {
 		cfg.DiscountRate = 0
 	}
-	return &Engine{db: dbx, log: log, cfg: cfg}
+	return &Engine{db: dbx, log: log, cfg: cfg, metrics: metrics}
 }
 
-func (e *Engine) RunOnce(ctx context.Context, now time.Time) error {
+func (e *Engine) RunOnce(ctx context.Context, now time.Time) (err error) {
 	since := now.Add(-e.cfg.Period)
+	start := time.Now()
+	invoicesEmitted := 0
+	defer func() {
+		if e.metrics != nil {
+			e.metrics.ObserveBillingRun(time.Since(start), invoicesEmitted, err)
+		}
+	}()
 
 	qtx, tx, err := e.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -168,6 +180,7 @@ func (e *Engine) RunOnce(ctx context.Context, now time.Time) error {
 			}
 		}
 		logs = append(logs, fmt.Sprintf("generated invoice %d for customer %d (line_items=%d total_cents=%d)", invoice.ID, invoice.CustomerID, len(inv.items), invoice.TotalCents))
+		invoicesEmitted++
 	}
 
 	if err := tx.Commit(); err != nil {

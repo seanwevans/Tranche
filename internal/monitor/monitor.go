@@ -21,11 +21,15 @@ type MetricsRecorder interface {
 	RecordProbe(serviceID int64, target string, ok bool, latency time.Duration)
 }
 
-type MetricsView struct {
-	rec *InMemoryMetrics
+type AvailabilityProvider interface {
+	Availability(serviceID int64, window time.Duration) float64
 }
 
-func NewMetricsView(rec *InMemoryMetrics) *MetricsView {
+type MetricsView struct {
+	rec AvailabilityProvider
+}
+
+func NewMetricsView(rec AvailabilityProvider) *MetricsView {
 	return &MetricsView{rec: rec}
 }
 

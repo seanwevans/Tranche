@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -8,29 +9,31 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/go-chi/chi/v5/middleware"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 
 	"tranche/internal/db"
+	"tranche/internal/health"
+	"tranche/internal/logging"
+	"tranche/internal/observability"
 )
 
 type Server struct {
-	log Logger
-	db  *db.Queries
-	r   chi.Router
+	log     *logging.Logger
+	db      *db.Queries
+	dbConn  *sql.DB
+	metrics *observability.Metrics
+	r       chi.Router
 }
 
 const maxRequestBodyBytes int64 = 1 << 20 // 1 MiB
 
-type Logger interface {
-	Printf(string, ...any)
-	Println(...any)
-	Fatalf(string, ...any)
-}
-
-func NewServer(log Logger, dbx *db.Queries) *Server {
-	s := &Server{log: log, db: dbx, r: chi.NewRouter()}
+func NewServer(log *logging.Logger, conn *sql.DB, dbx *db.Queries, metrics *observability.Metrics) *Server {
+	s := &Server{log: log, db: dbx, dbConn: conn, metrics: metrics, r: chi.NewRouter()}
 	s.routes()
 	return s
 }
@@ -38,7 +41,14 @@ func NewServer(log Logger, dbx *db.Queries) *Server {
 func (s *Server) Router() http.Handler { return s.r }
 
 func (s *Server) routes() {
+	s.r.Use(middleware.RequestID)
+	s.r.Use(middleware.RealIP)
+	s.r.Use(middleware.Recoverer)
+	s.r.Use(s.customerContext)
+	s.r.Use(s.requestLogger)
+	s.r.Get("/metrics", s.handleMetrics)
 	s.r.Get("/healthz", s.handleHealth)
+	s.r.Get("/readyz", s.handleReady)
 	s.r.Route("/v1/services", func(r chi.Router) {
 		r.Get("/", s.handleListServices)
 		r.Post("/", s.handleCreateService)
@@ -64,9 +74,58 @@ func (s *Server) routes() {
 	})
 }
 
+func (s *Server) requestLogger(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		reqID := middleware.GetReqID(r.Context())
+		logger := s.log.WithRequest(reqID, r.URL.Path).With("method", r.Method)
+		if customerID, ok := logging.CustomerIDFromContext(r.Context()); ok {
+			logger = logger.With("customer_id", customerID)
+		}
+		ctx := logging.ContextWithLogger(r.Context(), logger)
+		ww := middleware.NewWrapResponseWriter(w, r.ProtoMajor)
+		start := time.Now()
+		next.ServeHTTP(ww, r.WithContext(ctx))
+		logging.FromContext(ctx, s.log).Infof("request complete status=%d duration_ms=%d", ww.Status(), time.Since(start).Milliseconds())
+	})
+}
+
+func (s *Server) customerContext(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		header := strings.TrimSpace(r.Header.Get("X-Customer-ID"))
+		if header == "" {
+			header = strings.TrimSpace(r.URL.Query().Get("customer_id"))
+		}
+		if header != "" {
+			if id, err := strconv.ParseInt(header, 10, 64); err == nil && id > 0 {
+				ctx := logging.ContextWithCustomer(r.Context(), id)
+				r = r.WithContext(ctx)
+			}
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func (s *Server) logger(ctx context.Context) *logging.Logger {
+	return logging.FromContext(ctx, s.log)
+}
+
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte("ok"))
+}
+
+func (s *Server) handleReady(w http.ResponseWriter, r *http.Request) {
+	if err := health.ReadyCheck(r.Context(), s.dbConn); err != nil {
+		s.logger(r.Context()).Errorf("control-plane readiness failed: %v", err)
+		http.Error(w, err.Error(), http.StatusServiceUnavailable)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte("ready"))
+}
+
+func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
+	promhttp.HandlerFor(s.metrics.Registry(), promhttp.HandlerOpts{}).ServeHTTP(w, r)
 }
 
 func (s *Server) handleListServices(w http.ResponseWriter, r *http.Request) {
@@ -76,9 +135,11 @@ func (s *Server) handleListServices(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error(), nil)
 		return
 	}
+	ctx = logging.ContextWithCustomer(ctx, customerID)
+	r = r.WithContext(ctx)
 	services, err := s.db.GetActiveServicesForCustomer(ctx, customerID)
 	if err != nil {
-		s.log.Printf("GetActiveServicesForCustomer: %v", err)
+		s.logger(ctx).Errorf("GetActiveServicesForCustomer: %v", err)
 		writeError(w, http.StatusInternalServerError, "failed to list services", nil)
 		return
 	}
@@ -92,6 +153,8 @@ func (s *Server) handleCreateService(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error(), nil)
 		return
 	}
+	ctx = logging.ContextWithCustomer(ctx, customerID)
+	r = r.WithContext(ctx)
 	var req createServiceRequest
 	if err := decodeJSON(http.MaxBytesReader(w, r.Body, maxRequestBodyBytes), &req); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error(), nil)
@@ -108,7 +171,7 @@ func (s *Server) handleCreateService(w http.ResponseWriter, r *http.Request) {
 		BackupCdn:  req.BackupCDN,
 	})
 	if err != nil {
-		s.log.Printf("InsertService: %v", err)
+		s.logger(ctx).Errorf("InsertService: %v", err)
 		writeDBError(w, err, "failed to create service")
 		return
 	}
@@ -127,25 +190,27 @@ func (s *Server) handleGetService(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error(), nil)
 		return
 	}
+	ctx = logging.ContextWithCustomer(ctx, customerID)
+	r = r.WithContext(ctx)
 	svc, err := s.db.GetServiceForCustomer(ctx, db.GetServiceForCustomerParams{ID: serviceID, CustomerID: customerID})
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			writeError(w, http.StatusNotFound, "service not found", nil)
 			return
 		}
-		s.log.Printf("GetServiceForCustomer: %v", err)
+		s.logger(ctx).Errorf("GetServiceForCustomer: %v", err)
 		writeError(w, http.StatusInternalServerError, "failed to load service", nil)
 		return
 	}
 	domains, err := s.db.GetServiceDomains(ctx, svc.ID)
 	if err != nil {
-		s.log.Printf("GetServiceDomains: %v", err)
+		s.logger(ctx).Errorf("GetServiceDomains: %v", err)
 		writeError(w, http.StatusInternalServerError, "failed to load domains", nil)
 		return
 	}
 	policies, err := s.db.GetStormPoliciesForService(ctx, svc.ID)
 	if err != nil {
-		s.log.Printf("GetStormPoliciesForService: %v", err)
+		s.logger(ctx).Errorf("GetStormPoliciesForService: %v", err)
 		writeError(w, http.StatusInternalServerError, "failed to load storm policies", nil)
 		return
 	}
@@ -168,13 +233,15 @@ func (s *Server) handleUpdateService(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error(), nil)
 		return
 	}
+	ctx = logging.ContextWithCustomer(ctx, customerID)
+	r = r.WithContext(ctx)
 	svc, err := s.db.GetServiceForCustomer(ctx, db.GetServiceForCustomerParams{ID: serviceID, CustomerID: customerID})
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			writeError(w, http.StatusNotFound, "service not found", nil)
 			return
 		}
-		s.log.Printf("GetServiceForCustomer: %v", err)
+		s.logger(ctx).Errorf("GetServiceForCustomer: %v", err)
 		writeError(w, http.StatusInternalServerError, "failed to load service", nil)
 		return
 	}
@@ -196,7 +263,7 @@ func (s *Server) handleUpdateService(w http.ResponseWriter, r *http.Request) {
 		BackupCdn:  updated.BackupCdn,
 	})
 	if err != nil {
-		s.log.Printf("UpdateService: %v", err)
+		s.logger(ctx).Errorf("UpdateService: %v", err)
 		writeDBError(w, err, "failed to update service")
 		return
 	}
@@ -215,13 +282,15 @@ func (s *Server) handleDeleteService(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error(), nil)
 		return
 	}
+	ctx = logging.ContextWithCustomer(ctx, customerID)
+	r = r.WithContext(ctx)
 	_, err = s.db.SoftDeleteService(ctx, db.SoftDeleteServiceParams{ID: serviceID, CustomerID: customerID})
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			writeError(w, http.StatusNotFound, "service not found", nil)
 			return
 		}
-		s.log.Printf("SoftDeleteService: %v", err)
+		s.logger(ctx).Errorf("SoftDeleteService: %v", err)
 		writeError(w, http.StatusInternalServerError, "failed to delete service", nil)
 		return
 	}
@@ -235,7 +304,7 @@ func (s *Server) handleListDomains(w http.ResponseWriter, r *http.Request) {
 	}
 	domains, err := s.db.GetServiceDomains(r.Context(), svc.ID)
 	if err != nil {
-		s.log.Printf("GetServiceDomains: %v", err)
+		s.logger(r.Context()).Errorf("GetServiceDomains: %v", err)
 		writeError(w, http.StatusInternalServerError, "failed to list domains", nil)
 		return
 	}
@@ -261,7 +330,7 @@ func (s *Server) handleCreateDomain(w http.ResponseWriter, r *http.Request) {
 		Name:      req.Name,
 	})
 	if err != nil {
-		s.log.Printf("InsertServiceDomain: %v", err)
+		s.logger(r.Context()).Errorf("InsertServiceDomain: %v", err)
 		writeDBError(w, err, "failed to add domain")
 		return
 	}
@@ -284,7 +353,7 @@ func (s *Server) handleDeleteDomain(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusNotFound, "domain not found", nil)
 			return
 		}
-		s.log.Printf("DeleteServiceDomain: %v", err)
+		s.logger(r.Context()).Errorf("DeleteServiceDomain: %v", err)
 		writeError(w, http.StatusInternalServerError, "failed to delete domain", nil)
 		return
 	}
@@ -298,7 +367,7 @@ func (s *Server) handleListStormPolicies(w http.ResponseWriter, r *http.Request)
 	}
 	policies, err := s.db.GetStormPoliciesForService(r.Context(), svc.ID)
 	if err != nil {
-		s.log.Printf("GetStormPoliciesForService: %v", err)
+		s.logger(r.Context()).Errorf("GetStormPoliciesForService: %v", err)
 		writeError(w, http.StatusInternalServerError, "failed to list storm policies", nil)
 		return
 	}
@@ -321,7 +390,7 @@ func (s *Server) handleCreateStormPolicy(w http.ResponseWriter, r *http.Request)
 	}
 	policy, err := s.db.InsertStormPolicy(r.Context(), req.ToInsertParams(svc.ID))
 	if err != nil {
-		s.log.Printf("InsertStormPolicy: %v", err)
+		s.logger(r.Context()).Errorf("InsertStormPolicy: %v", err)
 		writeDBError(w, err, "failed to create storm policy")
 		return
 	}
@@ -344,7 +413,7 @@ func (s *Server) handleUpdateStormPolicy(w http.ResponseWriter, r *http.Request)
 			writeError(w, http.StatusNotFound, "storm policy not found", nil)
 			return
 		}
-		s.log.Printf("GetStormPolicyForService: %v", err)
+		s.logger(r.Context()).Errorf("GetStormPolicyForService: %v", err)
 		writeError(w, http.StatusInternalServerError, "failed to load storm policy", nil)
 		return
 	}
@@ -362,7 +431,7 @@ func (s *Server) handleUpdateStormPolicy(w http.ResponseWriter, r *http.Request)
 	params.ServiceID = existing.ServiceID
 	policy, err := s.db.UpdateStormPolicy(r.Context(), params)
 	if err != nil {
-		s.log.Printf("UpdateStormPolicy: %v", err)
+		s.logger(r.Context()).Errorf("UpdateStormPolicy: %v", err)
 		writeDBError(w, err, "failed to update storm policy")
 		return
 	}
@@ -385,7 +454,7 @@ func (s *Server) handleDeleteStormPolicy(w http.ResponseWriter, r *http.Request)
 			writeError(w, http.StatusNotFound, "storm policy not found", nil)
 			return
 		}
-		s.log.Printf("DeleteStormPolicy: %v", err)
+		s.logger(r.Context()).Errorf("DeleteStormPolicy: %v", err)
 		writeError(w, http.StatusInternalServerError, "failed to delete storm policy", nil)
 		return
 	}
@@ -404,13 +473,15 @@ func (s *Server) requireServiceContext(w http.ResponseWriter, r *http.Request) (
 		writeError(w, http.StatusBadRequest, err.Error(), nil)
 		return db.Service{}, false
 	}
+	ctx = logging.ContextWithCustomer(ctx, customerID)
+	r = r.WithContext(ctx)
 	svc, err := s.db.GetServiceForCustomer(ctx, db.GetServiceForCustomerParams{ID: serviceID, CustomerID: customerID})
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			writeError(w, http.StatusNotFound, "service not found", nil)
 			return db.Service{}, false
 		}
-		s.log.Printf("GetServiceForCustomer: %v", err)
+		s.logger(ctx).Errorf("GetServiceForCustomer: %v", err)
 		writeError(w, http.StatusInternalServerError, "failed to load service", nil)
 		return db.Service{}, false
 	}

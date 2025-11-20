@@ -41,41 +41,18 @@ func runMigrations(ctx context.Context, conn *sql.DB) (err error) {
 		}
 	}()
 
-	const createTable = `CREATE TABLE IF NOT EXISTS schema_migrations (
-                version TEXT PRIMARY KEY,
-                applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-        )`
-	if _, err := conn.ExecContext(ctx, createTable); err != nil {
-		return fmt.Errorf("create schema_migrations: %w", err)
+	if err := ensureMigrationsTable(ctx, conn); err != nil {
+		return err
 	}
-	rows, err := conn.QueryContext(ctx, `SELECT version FROM schema_migrations`)
+	applied, err := appliedMigrations(ctx, conn)
 	if err != nil {
-		return fmt.Errorf("list applied migrations: %w", err)
+		return err
 	}
-	defer rows.Close()
-	applied := make(map[string]struct{})
-	for rows.Next() {
-		var version string
-		if err := rows.Scan(&version); err != nil {
-			return fmt.Errorf("scan migration version: %w", err)
-		}
-		applied[version] = struct{}{}
-	}
-	if err := rows.Err(); err != nil {
-		return fmt.Errorf("read applied migrations: %w", err)
-	}
-	entries, err := migrations.Files.ReadDir(".")
+	entries, err := migrationVersions()
 	if err != nil {
-		return fmt.Errorf("read embedded migrations: %w", err)
+		return err
 	}
-	sort.Slice(entries, func(i, j int) bool {
-		return entries[i].Name() < entries[j].Name()
-	})
-	for _, entry := range entries {
-		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".sql") {
-			continue
-		}
-		version := entry.Name()
+	for _, version := range entries {
 		if _, ok := applied[version]; ok {
 			continue
 		}
@@ -88,6 +65,76 @@ func runMigrations(ctx context.Context, conn *sql.DB) (err error) {
 		}
 	}
 	return nil
+}
+
+// CheckMigrations verifies that all embedded migrations are applied without
+// mutating the database. The advisory lock is intentionally skipped to avoid
+// blocking readiness probes.
+func CheckMigrations(ctx context.Context, conn *sql.DB) error {
+	if err := ensureMigrationsTable(ctx, conn); err != nil {
+		return err
+	}
+	applied, err := appliedMigrations(ctx, conn)
+	if err != nil {
+		return err
+	}
+	versions, err := migrationVersions()
+	if err != nil {
+		return err
+	}
+	for _, v := range versions {
+		if _, ok := applied[v]; !ok {
+			return fmt.Errorf("pending migration: %s", v)
+		}
+	}
+	return nil
+}
+
+func ensureMigrationsTable(ctx context.Context, conn *sql.DB) error {
+	const createTable = `CREATE TABLE IF NOT EXISTS schema_migrations (
+                version TEXT PRIMARY KEY,
+                applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )`
+	if _, err := conn.ExecContext(ctx, createTable); err != nil {
+		return fmt.Errorf("create schema_migrations: %w", err)
+	}
+	return nil
+}
+
+func appliedMigrations(ctx context.Context, conn *sql.DB) (map[string]struct{}, error) {
+	rows, err := conn.QueryContext(ctx, `SELECT version FROM schema_migrations`)
+	if err != nil {
+		return nil, fmt.Errorf("list applied migrations: %w", err)
+	}
+	defer rows.Close()
+	applied := make(map[string]struct{})
+	for rows.Next() {
+		var version string
+		if err := rows.Scan(&version); err != nil {
+			return nil, fmt.Errorf("scan migration version: %w", err)
+		}
+		applied[version] = struct{}{}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("read applied migrations: %w", err)
+	}
+	return applied, nil
+}
+
+func migrationVersions() ([]string, error) {
+	entries, err := migrations.Files.ReadDir(".")
+	if err != nil {
+		return nil, fmt.Errorf("read embedded migrations: %w", err)
+	}
+	versions := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".sql") {
+			continue
+		}
+		versions = append(versions, entry.Name())
+	}
+	sort.Strings(versions)
+	return versions, nil
 }
 
 func applyMigration(ctx context.Context, conn *sql.DB, version, body string) error {

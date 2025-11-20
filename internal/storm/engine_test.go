@@ -13,7 +13,7 @@ import (
 func TestEvaluatePolicyStartsStorm(t *testing.T) {
 	store := newFakeStormStore()
 	mv := &fakeMetricsView{avail: 0.4}
-	eng := NewEngine(store, mv, fakeLogger{})
+	eng := NewEngine(store, mv, nil, fakeLogger{})
 	now := time.Unix(1700000000, 0).UTC()
 	eng.now = func() time.Time { return now }
 
@@ -29,7 +29,7 @@ func TestEvaluatePolicyStartsStorm(t *testing.T) {
 func TestEvaluatePolicyHonorsCooldown(t *testing.T) {
 	store := newFakeStormStore()
 	mv := &fakeMetricsView{avail: 0.1}
-	eng := NewEngine(store, mv, fakeLogger{})
+	eng := NewEngine(store, mv, nil, fakeLogger{})
 	now := time.Unix(1700000000, 0).UTC()
 	eng.now = func() time.Time { return now }
 
@@ -54,7 +54,7 @@ func TestEvaluatePolicyHonorsCooldown(t *testing.T) {
 func TestEvaluatePolicyResolvesStorm(t *testing.T) {
 	store := newFakeStormStore()
 	mv := &fakeMetricsView{avail: 0.99}
-	eng := NewEngine(store, mv, fakeLogger{})
+	eng := NewEngine(store, mv, nil, fakeLogger{})
 	now := time.Unix(1700000000, 0).UTC()
 	eng.now = func() time.Time { return now }
 
