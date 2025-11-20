@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -18,6 +19,17 @@ type Config struct {
 	AWSAccessKey          string
 	AWSSecretKey          string
 	AWSSession            string
+	CDNDefaultProvider    string
+	CDNServiceProviders   map[int64]string
+	CDNCustomerProviders  map[int64]string
+	Cloudflare            CloudflareConfig
+	UsageWindow           time.Duration
+}
+
+type CloudflareConfig struct {
+	APIToken       string
+	DefaultAccount string
+	ZoneConfigJSON string
 }
 
 func Load() Config {
@@ -33,6 +45,15 @@ func Load() Config {
 		BillingPeriod:         durationEnv("BILLING_PERIOD", 24*time.Hour),
 		BillingRateCentsPerGB: intEnv("BILLING_RATE_CENTS_PER_GB", 12),
 		BillingDiscountRate:   floatEnv("BILLING_DISCOUNT_RATE", 0.5),
+		CDNDefaultProvider:    getenv("CDN_DEFAULT_PROVIDER", ""),
+		CDNServiceProviders:   parseProviderOverrides("CDN_PROVIDER_SERVICE_OVERRIDES"),
+		CDNCustomerProviders:  parseProviderOverrides("CDN_PROVIDER_CUSTOMER_OVERRIDES"),
+		Cloudflare: CloudflareConfig{
+			APIToken:       os.Getenv("CLOUDFLARE_API_TOKEN"),
+			DefaultAccount: getenv("CLOUDFLARE_ACCOUNT_ID", ""),
+			ZoneConfigJSON: os.Getenv("CLOUDFLARE_ZONE_CONFIG"),
+		},
+		UsageWindow: durationEnv("USAGE_WINDOW", time.Hour),
 	}
 	return cfg
 }
@@ -69,4 +90,30 @@ func floatEnv(key string, def float64) float64 {
 		}
 	}
 	return def
+}
+
+func parseProviderOverrides(envKey string) map[int64]string {
+	val := os.Getenv(envKey)
+	if val == "" {
+		return map[int64]string{}
+	}
+
+	table := make(map[int64]string)
+	entries := strings.Split(val, ",")
+	for _, entry := range entries {
+		entry = strings.TrimSpace(entry)
+		if entry == "" {
+			continue
+		}
+		parts := strings.SplitN(entry, "=", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		id, err := strconv.ParseInt(parts[0], 10, 64)
+		if err != nil {
+			continue
+		}
+		table[id] = parts[1]
+	}
+	return table
 }

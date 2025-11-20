@@ -140,6 +140,36 @@ func (q *Queries) GetActiveServicesForCustomer(ctx context.Context, customerID i
 	return items, nil
 }
 
+const getUsageSnapshotForWindow = `-- name: GetUsageSnapshotForWindow :one
+SELECT id, service_id, window_start, window_end, primary_bytes, backup_bytes, created_at, invoice_id
+FROM usage_snapshots
+WHERE service_id = $1
+  AND window_start = $2
+  AND window_end = $3
+`
+
+type GetUsageSnapshotForWindowParams struct {
+	ServiceID   int64     `json:"service_id"`
+	WindowStart time.Time `json:"window_start"`
+	WindowEnd   time.Time `json:"window_end"`
+}
+
+func (q *Queries) GetUsageSnapshotForWindow(ctx context.Context, arg GetUsageSnapshotForWindowParams) (UsageSnapshot, error) {
+	row := q.db.QueryRowContext(ctx, getUsageSnapshotForWindow, arg.ServiceID, arg.WindowStart, arg.WindowEnd)
+	var i UsageSnapshot
+	err := row.Scan(
+		&i.ID,
+		&i.ServiceID,
+		&i.WindowStart,
+		&i.WindowEnd,
+		&i.PrimaryBytes,
+		&i.BackupBytes,
+		&i.CreatedAt,
+		&i.InvoiceID,
+	)
+	return i, err
+}
+
 const getActiveStormForPolicy = `-- name: GetActiveStormForPolicy :one
 SELECT id, service_id, kind, started_at, ended_at
 FROM storm_events
@@ -802,6 +832,36 @@ type MarkUsageSnapshotInvoicedParams struct {
 func (q *Queries) MarkUsageSnapshotInvoiced(ctx context.Context, arg MarkUsageSnapshotInvoicedParams) error {
 	_, err := q.db.ExecContext(ctx, markUsageSnapshotInvoiced, arg.InvoiceID, arg.ID)
 	return err
+}
+
+const insertUsageSnapshot = `-- name: InsertUsageSnapshot :one
+INSERT INTO usage_snapshots (service_id, window_start, window_end, primary_bytes, backup_bytes)
+VALUES ($1, $2, $3, $4, $5)
+RETURNING id, service_id, window_start, window_end, primary_bytes, backup_bytes, created_at, invoice_id
+`
+
+type InsertUsageSnapshotParams struct {
+	ServiceID    int64     `json:"service_id"`
+	WindowStart  time.Time `json:"window_start"`
+	WindowEnd    time.Time `json:"window_end"`
+	PrimaryBytes int64     `json:"primary_bytes"`
+	BackupBytes  int64     `json:"backup_bytes"`
+}
+
+func (q *Queries) InsertUsageSnapshot(ctx context.Context, arg InsertUsageSnapshotParams) (UsageSnapshot, error) {
+	row := q.db.QueryRowContext(ctx, insertUsageSnapshot, arg.ServiceID, arg.WindowStart, arg.WindowEnd, arg.PrimaryBytes, arg.BackupBytes)
+	var i UsageSnapshot
+	err := row.Scan(
+		&i.ID,
+		&i.ServiceID,
+		&i.WindowStart,
+		&i.WindowEnd,
+		&i.PrimaryBytes,
+		&i.BackupBytes,
+		&i.CreatedAt,
+		&i.InvoiceID,
+	)
+	return i, err
 }
 
 const softDeleteService = `-- name: SoftDeleteService :one

@@ -11,6 +11,13 @@ WHERE deleted_at IS NULL
   AND customer_id = $1
 ORDER BY id;
 
+-- name: GetUsageSnapshotForWindow :one
+SELECT id, service_id, window_start, window_end, primary_bytes, backup_bytes, created_at, invoice_id
+FROM usage_snapshots
+WHERE service_id = $1
+  AND window_start = $2
+  AND window_end = $3;
+
 -- name: GetServiceForCustomer :one
 SELECT *
 FROM services
@@ -200,3 +207,8 @@ RETURNING id, invoice_id, service_id, window_start, window_end, primary_bytes, b
 UPDATE usage_snapshots
 SET invoice_id = $1
 WHERE id = $2;
+
+-- name: InsertUsageSnapshot :one
+INSERT INTO usage_snapshots (service_id, window_start, window_end, primary_bytes, backup_bytes)
+VALUES ($1, $2, $3, $4, $5)
+RETURNING id, service_id, window_start, window_end, primary_bytes, backup_bytes, created_at, invoice_id;
