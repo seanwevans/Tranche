@@ -61,7 +61,7 @@ func (c *Client) Usage(ctx context.Context, start, end time.Time, window time.Du
 		return nil, fmt.Errorf("cloudflare only supports 1h windows; got %s", window)
 	}
 
-	query := `query usage($accountTag: string, $from: Time!, $to: Time!, $hosts: [String!]) {
+	query := `query usage($accountTag: String, $from: Time!, $to: Time!, $hosts: [String!]) {
   viewer {
     accounts(filter: {accountTag: $accountTag}) {
       httpRequestsAdaptiveGroups(
