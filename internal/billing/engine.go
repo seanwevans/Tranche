@@ -27,6 +27,10 @@ type Engine struct {
 	cfg Config
 }
 
+type coverageQuerier interface {
+	GetMaxCoverageFactorForService(context.Context, int64) (float64, error)
+}
+
 func NewEngine(dbx *db.Queries, log Logger, cfg Config) *Engine {
 	if cfg.Period <= 0 {
 		cfg.Period = 24 * time.Hour
@@ -42,7 +46,14 @@ func NewEngine(dbx *db.Queries, log Logger, cfg Config) *Engine {
 
 func (e *Engine) RunOnce(ctx context.Context, now time.Time) error {
 	since := now.Add(-e.cfg.Period)
-	snapshots, err := e.db.GetUnbilledUsageSnapshots(ctx, db.GetUnbilledUsageSnapshotsParams{
+
+	qtx, tx, err := e.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin invoice transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	snapshots, err := qtx.LockUnbilledUsageSnapshots(ctx, db.LockUnbilledUsageSnapshotsParams{
 		WindowEnd:   now,
 		WindowStart: since,
 	})
@@ -58,7 +69,7 @@ func (e *Engine) RunOnce(ctx context.Context, now time.Time) error {
 	invoices := make(map[int64]*invoiceBuild)
 
 	for _, snap := range snapshots {
-		storms, err := e.db.GetStormEventsForWindow(ctx, db.GetStormEventsForWindowParams{
+		storms, err := qtx.GetStormEventsForWindow(ctx, db.GetStormEventsForWindowParams{
 			ServiceID:   snap.ServiceID,
 			WindowEnd:   snap.WindowEnd,
 			WindowStart: sql.NullTime{Time: snap.WindowStart, Valid: true},
@@ -66,7 +77,7 @@ func (e *Engine) RunOnce(ctx context.Context, now time.Time) error {
 		if err != nil {
 			return fmt.Errorf("storms for service %d: %w", snap.ServiceID, err)
 		}
-		maxCoverage, err := e.maxCoverageFactor(ctx, coverageCache, snap.ServiceID)
+		maxCoverage, err := e.maxCoverageFactor(ctx, qtx, coverageCache, snap.ServiceID)
 		if err != nil {
 			return err
 		}
@@ -114,12 +125,6 @@ func (e *Engine) RunOnce(ctx context.Context, now time.Time) error {
 			DiscountCents:  discount,
 		})
 	}
-
-	qtx, tx, err := e.db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("begin invoice transaction: %w", err)
-	}
-	defer tx.Rollback()
 
 	logs := make([]string, 0, len(invoices))
 
@@ -176,11 +181,11 @@ func (e *Engine) RunOnce(ctx context.Context, now time.Time) error {
 	return nil
 }
 
-func (e *Engine) maxCoverageFactor(ctx context.Context, cache map[int64]float64, serviceID int64) (float64, error) {
+func (e *Engine) maxCoverageFactor(ctx context.Context, q coverageQuerier, cache map[int64]float64, serviceID int64) (float64, error) {
 	if v, ok := cache[serviceID]; ok {
 		return v, nil
 	}
-	factor, err := e.db.GetMaxCoverageFactorForService(ctx, serviceID)
+	factor, err := q.GetMaxCoverageFactorForService(ctx, serviceID)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			cache[serviceID] = 1
